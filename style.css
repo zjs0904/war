@@ -28,7 +28,7 @@ button {
 }
 
 #app {
-  max-width: 1240px;
+  max-width: 1380px;
   margin: 0 auto;
   padding: 14px 18px 24px;
   display: flex;
@@ -306,11 +306,12 @@ button {
 }
 
 .board {
-  --cell: 50px;
+  /* 21 列；预留顶栏 / 侧栏 / 边框后按视口自适应格宽 */
+  --cell: clamp(24px, calc((100vw - 420px) / 21), 46px);
   position: relative;
   display: grid;
-  grid-template-columns: repeat(13, var(--cell));
-  grid-template-rows: repeat(9, var(--cell));
+  grid-template-columns: repeat(var(--cols, 21), var(--cell));
+  grid-template-rows: repeat(var(--rows, 13), var(--cell));
   border-radius: 4px;
   overflow: hidden;
   background: #121711;
@@ -348,6 +349,96 @@ button {
   place-items: center;
   font-size: calc(var(--cell) * 0.5);
   opacity: 0.85;
+}
+
+/* ───────── 地形 ───────── */
+.cell.forest {
+  background:
+    radial-gradient(circle at 50% 58%, rgba(58, 120, 66, 0.35), transparent 72%),
+    linear-gradient(160deg, #1e3423, #14251a);
+  box-shadow: inset 0 0 0 1px rgba(80, 140, 90, 0.12);
+}
+
+.cell.forest::after {
+  content: '🌲';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: calc(var(--cell) * 0.52);
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+.cell.hill {
+  background:
+    radial-gradient(circle at 50% 80%, rgba(150, 120, 70, 0.22), transparent 70%),
+    linear-gradient(160deg, #4b4130, #2c261b);
+  box-shadow:
+    inset 0 -3px 0 rgba(0, 0, 0, 0.35),
+    inset 0 2px 0 rgba(255, 255, 255, 0.06);
+}
+
+.cell.hill::after {
+  content: '⛰️';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: calc(var(--cell) * 0.54);
+  opacity: 0.82;
+  pointer-events: none;
+}
+
+.cell.swamp {
+  background:
+    radial-gradient(circle at 45% 65%, rgba(96, 128, 60, 0.28), transparent 70%),
+    linear-gradient(160deg, #28331f, #18200f);
+  box-shadow: inset 0 0 0 1px rgba(120, 150, 70, 0.12);
+}
+
+.cell.swamp::after {
+  content: '🌿';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: calc(var(--cell) * 0.5);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.cell.water {
+  background:
+    radial-gradient(circle at 32% 28%, rgba(120, 195, 230, 0.22), transparent 62%),
+    linear-gradient(160deg, #1b3b4c, #0f2530);
+  box-shadow: inset 0 0 14px rgba(0, 0, 0, 0.5);
+  cursor: not-allowed;
+}
+
+.cell.water::after {
+  content: '≈';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: calc(var(--cell) * 0.62);
+  color: rgba(150, 215, 245, 0.4);
+  animation: waterShimmer 3.6s ease-in-out infinite;
+}
+
+@keyframes waterShimmer {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.85; }
+}
+
+.cell.bridge {
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.4), transparent 20%, transparent 80%, rgba(0, 0, 0, 0.4)),
+    repeating-linear-gradient(0deg, #6d4c28 0 4px, #52371c 4px 8px);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.55),
+    inset 0 0 10px rgba(0, 0, 0, 0.25);
 }
 
 .cell.base-red {
@@ -541,6 +632,46 @@ button {
   animation: unitHit 0.32s ease;
 }
 
+/* ───────── 生产槽 ───────── */
+.spawn-el {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--cell);
+  height: var(--cell);
+  display: grid;
+  place-items: center;
+  z-index: 2;
+  pointer-events: none;
+  transform: translate(calc(var(--ux) * var(--cell)), calc(var(--uy) * var(--cell)));
+  border-radius: 7px;
+}
+
+.spawn-el.red {
+  border: 1px dashed rgba(220, 90, 90, 0.55);
+  background: rgba(220, 90, 90, 0.07);
+}
+
+.spawn-el.blue {
+  border: 1px dashed rgba(90, 140, 230, 0.55);
+  background: rgba(90, 140, 230, 0.07);
+}
+
+.spawn-el .s-mark {
+  font-size: calc(var(--cell) * 0.34);
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0.55;
+}
+
+.spawn-el.red .s-mark {
+  color: #ff9a9a;
+}
+
+.spawn-el.blue .s-mark {
+  color: #9cc0ff;
+}
+
 /* ───────── 飘字 ───────── */
 .float-text {
   position: absolute;
@@ -571,6 +702,28 @@ button {
 }
 
 /* ───────── 提示 / 横幅 ───────── */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px 13px;
+  font-size: 10px;
+  color: #7d8a77;
+  letter-spacing: 0.5px;
+}
+
+.lg-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: default;
+}
+
+.lg-icon {
+  font-size: 12px;
+  line-height: 1;
+}
+
 .hint {
   text-align: center;
   font-size: 11px;
@@ -881,7 +1034,7 @@ button {
 /* ───────── 响应式 ───────── */
 @media (max-width: 1180px) {
   .board {
-    --cell: 44px;
+    --cell: clamp(24px, calc((100vw - 380px) / 21), 44px);
   }
 
   .side {
@@ -899,8 +1052,17 @@ button {
     align-items: center;
   }
 
+  .board-area {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .board-frame {
+    overflow-x: auto;
+  }
+
   .board {
-    --cell: min(52px, calc((100vw - 46px) / 13));
+    --cell: clamp(26px, calc((100vw - 44px) / 21), 44px);
   }
 
   .side {
@@ -950,7 +1112,7 @@ button {
 
 @media (max-width: 560px) {
   .board {
-    --cell: calc((100vw - 34px) / 13);
+    --cell: 26px;
   }
 
   .board-frame {

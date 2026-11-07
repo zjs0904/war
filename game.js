@@ -2,12 +2,15 @@
 
 /* ============================================================
  * 小小大战争 · 双人对战 / 关卡模式
- * 红蓝双方轮流行动：购买兵种、移动、攻击、占领油井与基地
+ * 21×13 随机战场：高地 / 树林 / 沼泽 / 河流 / 桥梁 / 岩石
+ * 每局随机生成，两侧地形不镜像；单位击杀可晋升军衔
  * ============================================================ */
 
+const VERSION = 'v1.7'
+
 // ───────── 常量 ─────────
-const COLS = 13
-const ROWS = 9
+const COLS = 21
+const ROWS = 13
 
 const BASE_MAX_HP = 1000
 const START_MONEY = 400
@@ -15,31 +18,224 @@ const BASE_INCOME = 150
 const FIELD_INCOME = 50
 const BASE_CAPTURE_TURNS = 2
 
-const BASE_POS = {
-  red: { x: 0, y: 4 },
-  blue: { x: 12, y: 4 },
-}
-
-const SPAWN_POS = {
-  red: [
-    { x: 1, y: 3 },
-    { x: 1, y: 4 },
-    { x: 1, y: 5 },
-  ],
-  blue: [
-    { x: 11, y: 3 },
-    { x: 11, y: 4 },
-    { x: 11, y: 5 },
-  ],
-}
-
-// 红蓝各有一块油田（左右对称），工程师可以互相夺取
-const FIELD_POS = [
-  { x: 4, y: 2 },
-  { x: 8, y: 6 },
+const DIRS = [
+  [0, 1],
+  [0, -1],
+  [1, 0],
+  [-1, 0],
 ]
 
-const ROCKS = new Set(['3,2', '3,6', '9,2', '9,6', '6,4'])
+const BASE_POS = {
+  red: { x: 0, y: 6 },
+  blue: { x: 20, y: 6 },
+}
+
+// 兵营前的生产槽。注意避开基地相邻格（基地前的空格留给工程师占领）
+const SPAWN_POS = {
+  red: [
+    { x: 2, y: 5 },
+    { x: 2, y: 6 },
+    { x: 2, y: 7 },
+  ],
+  blue: [
+    { x: 18, y: 5 },
+    { x: 18, y: 6 },
+    { x: 18, y: 7 },
+  ],
+}
+
+const FIELD_POS = [
+  { x: 5, y: 4 },
+  { x: 5, y: 8 },
+  { x: 15, y: 4 },
+  { x: 15, y: 8 },
+]
+
+const key = (x, y) => `${x},${y}`
+
+// 地形表：move 为移动消耗，Infinity 表示不可通行
+const TERRAIN = {
+  '.': { key: 'flat', name: '平地', icon: '▦', move: 1, effect: '无特殊效果' },
+  H: { key: 'hill', name: '高地', icon: '⛰️', move: 1, effect: '射程 +1' },
+  F: { key: 'forest', name: '树林', icon: '🌲', move: 2, effect: '受到的伤害 -25%' },
+  M: { key: 'swamp', name: '沼泽', icon: '🌿', move: 2, effect: '受到的伤害 +20%' },
+  B: { key: 'bridge', name: '桥梁', icon: '🌉', move: 1, effect: '跨越水域的唯一通道' },
+  W: { key: 'water', name: '水域', icon: '🌊', move: Infinity, effect: '无法通行' },
+  '#': { key: 'rock', name: '岩石', icon: '🪨', move: Infinity, effect: '无法通行' },
+}
+
+// 地形字符：. 平地  H 高地  F 树林  M 沼泽  B 桥梁  W 水域  # 岩石
+const inBounds = (x, y) => x >= 0 && y >= 0 && x < COLS && y < ROWS
+const randInt = (n) => Math.floor(Math.random() * n)
+
+const TERRAIN_TILES = {}
+for (const ch of Object.keys(TERRAIN)) TERRAIN_TILES[TERRAIN[ch].key] = new Set()
+
+let MAP = []
+let MAP_AT = []
+
+const terrainAt = (x, y) => TERRAIN[MAP_AT[y]?.[x]] || TERRAIN['.']
+const moveCostAt = (x, y) => terrainAt(x, y).move
+
+function applyMap(rows) {
+  MAP = rows
+  MAP_AT = rows.map((row) => row.split(''))
+  for (const k of Object.keys(TERRAIN_TILES)) TERRAIN_TILES[k].clear()
+  rows.forEach((row, y) => {
+    row.split('').forEach((ch, x) => {
+      const t = TERRAIN[ch]
+      if (t) TERRAIN_TILES[t.key].add(key(x, y))
+    })
+  })
+}
+
+// 生成失败时的兜底地图（对称手绘）
+const FALLBACK_MAP = [
+  '.....................',
+  '...#....#....#....#..',
+  '..FF...H.....H...FF..',
+  '....#..M.....M..#....',
+  '..M.F..H.....H..F.M..',
+  '......WBWWWWWBW......',
+  '......WBWWWWWBW......',
+  '......WBWWWWWBW......',
+  '..M.F..H.....H..F.M..',
+  '....#..M.....M..#....',
+  '..FF...H.....H...FF..',
+  '..#....#....#....#...',
+  '.....................',
+]
+
+// ───────── 随机地图 ─────────
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = randInt(i + 1)
+    ;[arr[i], arr[j]] = [arr[j], arr[i]]
+  }
+  return arr
+}
+
+function addCluster(grid, reserved, ch, count, minSize, maxSize) {
+  for (let i = 0; i < count; i++) {
+    let x = -1
+    let y = -1
+    for (let t = 0; t < 40; t++) {
+      const tx = randInt(COLS)
+      const ty = randInt(ROWS)
+      if (!reserved.has(key(tx, ty)) && grid[ty][tx] === '.') {
+        x = tx
+        y = ty
+        break
+      }
+    }
+    if (x < 0) continue
+
+    const size = minSize + randInt(maxSize - minSize + 1)
+    for (let k = 0; k < size; k++) {
+      if (inBounds(x, y) && !reserved.has(key(x, y)) && grid[y][x] === '.') {
+        grid[y][x] = ch
+      }
+      const [dx, dy] = DIRS[randInt(DIRS.length)]
+      x += dx
+      y += dy
+    }
+  }
+}
+
+function floodFill(grid, start) {
+  const seen = new Set([key(start.x, start.y)])
+  const queue = [start]
+  while (queue.length) {
+    const cur = queue.shift()
+    for (const [dx, dy] of DIRS) {
+      const nx = cur.x + dx
+      const ny = cur.y + dy
+      if (!inBounds(nx, ny)) continue
+      const k = key(nx, ny)
+      if (seen.has(k)) continue
+      if (!Number.isFinite(TERRAIN[grid[ny][nx]].move)) continue
+      seen.add(k)
+      queue.push({ x: nx, y: ny })
+    }
+  }
+  return seen
+}
+
+function tryGenerateMap() {
+  const grid = Array.from({ length: ROWS }, () => Array(COLS).fill('.'))
+  const reserved = new Set()
+  const reserve = (x, y) => {
+    if (inBounds(x, y)) reserved.add(key(x, y))
+  }
+
+  // 基地、生产槽及其相邻格必须可通行
+  for (const side of ['red', 'blue']) {
+    const b = BASE_POS[side]
+    reserve(b.x, b.y)
+    for (const [dx, dy] of DIRS) reserve(b.x + dx, b.y + dy)
+    for (const p of SPAWN_POS[side]) {
+      reserve(p.x, p.y)
+      for (const [dx, dy] of DIRS) reserve(p.x + dx, p.y + dy)
+    }
+  }
+  for (const f of FIELD_POS) reserve(f.x, f.y)
+
+  // 纵贯地图的随机河流：位置、弯折、宽度随机，2~3 座桥
+  const width = Math.random() < 0.35 ? 2 : 1
+  let rx = 8 + randInt(4)
+  const riverX = []
+  for (let y = 0; y < ROWS; y++) {
+    rx = Math.max(7, Math.min(12, rx + randInt(3) - 1))
+    for (let w = 0; w < width; w++) grid[y][rx + w] = 'W'
+    riverX.push(rx)
+  }
+  const bridgeRows = shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]).slice(0, 2 + randInt(2))
+  for (const y of bridgeRows) {
+    const x = riverX[y]
+    for (let w = 0; w < width; w++) grid[y][x + w] = 'B'
+    reserve(x - 1, y)
+    reserve(x + width, y)
+  }
+
+  // 两侧各自随机生成地形簇，不做镜像
+  addCluster(grid, reserved, 'H', 3 + randInt(2), 1, 4)
+  addCluster(grid, reserved, 'F', 4 + randInt(2), 2, 5)
+  addCluster(grid, reserved, 'M', 2 + randInt(2), 1, 3)
+  addCluster(grid, reserved, '#', 2 + randInt(3), 1, 2)
+
+  // 校验：双方基地、油田、生产槽必须连通
+  const reach = floodFill(grid, BASE_POS.red)
+  const need = [BASE_POS.blue, ...FIELD_POS, ...SPAWN_POS.red, ...SPAWN_POS.blue]
+  if (!need.every((p) => reach.has(key(p.x, p.y)))) return null
+
+  return grid.map((row) => row.join(''))
+}
+
+function generateMap() {
+  for (let i = 0; i < 60; i++) {
+    const rows = tryGenerateMap()
+    if (rows) {
+      applyMap(rows)
+      return
+    }
+  }
+  applyMap(FALLBACK_MAP)
+}
+
+applyMap(FALLBACK_MAP)
+
+const isHill = (x, y) => TERRAIN_TILES.hill.has(key(x, y))
+const isForest = (x, y) => TERRAIN_TILES.forest.has(key(x, y))
+const isSwamp = (x, y) => TERRAIN_TILES.swamp.has(key(x, y))
+
+// 军衔：击杀数达到门槛晋升，攻击与生命上限提升，并回满血
+const RANKS = [
+  { name: '新兵', kills: 0, atk: 1.0, hp: 1.0 },
+  { name: '下士', kills: 2, atk: 1.15, hp: 1.25 },
+  { name: '中士', kills: 4, atk: 1.3, hp: 1.5 },
+  { name: '上尉', kills: 7, atk: 1.5, hp: 1.8 },
+  { name: '少校', kills: 11, atk: 1.7, hp: 2.2 },
+]
 
 const UNIT_TYPES = {
   infantry: {
@@ -51,7 +247,7 @@ const UNIT_TYPES = {
     atk: 75,
     range: 2,
     move: 3,
-    desc: '最基础的单位。射程 2，对砍一刀打掉对方 75% 生命，便宜、耐打、数量优势。',
+    desc: '最基础的单位。射程 2，对砍一刀打掉对方 75% 生命。站在高地上射程 +1。',
   },
   sniper: {
     key: 'sniper',
@@ -62,8 +258,7 @@ const UNIT_TYPES = {
     atk: 200,
     range: 6,
     move: 2,
-    moveOrAttack: true,
-    desc: '射程 6，一击必杀步兵、工程师、手榴弹兵。移动后不能攻击，且非常脆。',
+    desc: '射程 6，一击必杀步兵。移动后仍可攻击；站上高地射程可达 7。',
   },
   engineer: {
     key: 'engineer',
@@ -75,7 +270,7 @@ const UNIT_TYPES = {
     range: 0,
     move: 3,
     canCapture: true,
-    desc: '没有攻击力。站在油田上，下一回合开始即可占领（+50/回合）；站在敌方基地旁 2 回合可占领基地获胜。',
+    desc: '没有攻击力。站上油田一回合后占领；在敌方基地旁站 2 回合可占领基地获胜。',
   },
   grenadier: {
     key: 'grenadier',
@@ -87,7 +282,7 @@ const UNIT_TYPES = {
     range: 3,
     move: 2,
     splash: 40,
-    desc: '射程 3 投掷手榴弹，对目标造成 80 伤害，并对其周围敌人造成 40 溅射伤害。',
+    desc: '射程 3，对目标周围敌人造成 40 溅射伤害。站上高地射程 +1。',
   },
   commando: {
     key: 'commando',
@@ -116,6 +311,7 @@ const els = {}
 const cellEls = []
 const unitEls = new Map()
 let baseEls = {}
+let spawnEls = []
 
 // ───────── 状态 ─────────
 let state = null
@@ -123,7 +319,6 @@ let unitSeq = 1
 let hintTimer = null
 let aiTimer = null
 
-const key = (x, y) => `${x},${y}`
 const dist = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y)
 const sideName = (s) => (s === 'red' ? '红方' : '蓝方')
 const enemyOf = (s) => (s === 'red' ? 'blue' : 'red')
@@ -131,6 +326,7 @@ const enemyOf = (s) => (s === 'red' ? 'blue' : 'red')
 // ───────── 初始化 ─────────
 function init(mode = 'pvp', level = 1) {
   clearTimeout(aiTimer)
+  generateMap()
   const lv = LEVELS.find((l) => l.id === level) || LEVELS[0]
 
   state = {
@@ -142,9 +338,13 @@ function init(mode = 'pvp', level = 1) {
     baseHp: { red: BASE_MAX_HP, blue: BASE_MAX_HP },
     baseProgress: { red: 0, blue: 0 },
     units: [],
-    fields: FIELD_POS.map((p, i) => ({ ...p, owner: i === 0 ? 'red' : 'blue' })),
+    fields: FIELD_POS.map((p, i) => ({
+      ...p,
+      owner: i < FIELD_POS.length / 2 ? 'red' : 'blue',
+    })),
     selectedId: null,
     hoverId: null,
+    hoverCell: null,
     hoverType: null,
     log: [],
     gameOver: false,
@@ -159,17 +359,23 @@ function init(mode = 'pvp', level = 1) {
 
   buildBoard()
   buildBases()
+  buildSpawns()
 
   els.overlay.hidden = true
   els.helpOverlay.hidden = true
   els.menuOverlay.hidden = true
   els.log.innerHTML = ''
-  addLog('sys', `战斗开始。${mode === 'ai' ? `关卡模式：${lv.name} · ${lv.sub}` : '双人对战'}，红方先手。`)
+  addLog(
+    'sys',
+    `${VERSION} 战斗开始。${mode === 'ai' ? `关卡模式：${lv.name} · ${lv.sub}` : '双人对战'}，红方先手。`
+  )
 
   startTurn('red', true)
 }
 
 function buildBoard() {
+  els.board.style.setProperty('--cols', COLS)
+  els.board.style.setProperty('--rows', ROWS)
   for (let y = 0; y < ROWS; y++) {
     for (let x = 0; x < COLS; x++) {
       const cell = document.createElement('div')
@@ -195,29 +401,42 @@ function buildBases() {
   }
 }
 
+function buildSpawns() {
+  spawnEls = []
+  for (const side of ['red', 'blue']) {
+    for (const p of SPAWN_POS[side]) {
+      const el = document.createElement('div')
+      el.className = `spawn-el ${side}`
+      el.style.setProperty('--ux', p.x)
+      el.style.setProperty('--uy', p.y)
+      el.innerHTML = `<span class="s-mark">＋</span>`
+      els.board.appendChild(el)
+      spawnEls.push(el)
+    }
+  }
+}
+
 // ───────── 回合 ─────────
 function startTurn(side, first = false) {
   state.turn = side
   state.selectedId = null
   state.aiThinking = false
 
-  // 1. 占领结算（工程师上一回合站桩）
   if (!first) {
     resolveCaptures(side)
     if (state.gameOver) {
       render()
       return
     }
+    resolveSpawnSlots(side)
   }
 
-  // 2. 收入
   const fieldCount = state.fields.filter((f) => f.owner === side).length
   let income = BASE_INCOME + fieldCount * FIELD_INCOME
   if (state.mode === 'ai' && side === 'blue') income += state.levelConfig.aiIncome
   state.money[side] += income
   addLog('sys', `${sideName(side)}回合开始，收入 +${income}（油田 ${fieldCount} 座）`)
 
-  // 3. 重置本方单位
   for (const u of state.units) {
     if (u.side === side) {
       u.moved = false
@@ -244,7 +463,6 @@ function endTurn() {
   switchTurn()
 }
 
-// 内部切回合（AI 也走这里）
 function switchTurn() {
   if (state.gameOver) return
   if (state.turn === 'blue') state.round++
@@ -252,7 +470,6 @@ function switchTurn() {
 }
 
 function resolveCaptures(side) {
-  // 油田：工程师站在敌方/中立油田上，一回合结算
   for (const f of state.fields) {
     if (f.owner === side) continue
     const eng = state.units.find(
@@ -265,7 +482,6 @@ function resolveCaptures(side) {
     }
   }
 
-  // 基地：工程师站在敌方基地旁，两回合占领
   const eb = enemyBasePos(side)
   const adjacent = state.units.some(
     (u) => u.side === side && u.type === 'engineer' && dist(u, eb) <= 1
@@ -281,10 +497,28 @@ function resolveCaptures(side) {
   }
 }
 
+// 生产槽：己方单位站满一回合回满血；敌方单位站满一回合被清除
+function resolveSpawnSlots(side) {
+  for (const p of SPAWN_POS[side]) {
+    const u = unitAt(p.x, p.y)
+    if (!u) continue
+    if (u.side !== side) {
+      state.units = state.units.filter((x) => x.id !== u.id)
+      addLog(u.side, `${u.name} 在敌方生产槽上被清除`, true)
+      floatText(p.x, p.y, '清除', 'dmg')
+    } else if (u.hp < u.maxHp) {
+      const healed = u.maxHp - u.hp
+      u.hp = u.maxHp
+      addLog(side, `${u.name} 在生产槽休整，生命回满`)
+      floatText(p.x, p.y, `+${healed}`, 'heal')
+    }
+  }
+}
+
 // ───────── 购买 ─────────
 function findSpawn(side) {
   for (const p of SPAWN_POS[side]) {
-    if (ROCKS.has(key(p.x, p.y))) continue
+    if (!Number.isFinite(moveCostAt(p.x, p.y))) continue
     if (unitAt(p.x, p.y)) continue
     if (isBaseTile(p.x, p.y)) continue
     return p
@@ -306,17 +540,15 @@ function doBuy(typeKey, side) {
   }
   const spot = findSpawn(side)
   if (!spot) {
-    if (side === 'red') setHint('兵营周围没有空位，先让单位走开', true)
+    if (side === 'red') setHint('生产槽已满，先让单位走开', true)
     return false
   }
 
   state.money[side] -= type.cost
   const u = makeUnit(type, side, spot.x, spot.y)
-  u.moved = true
-  u.acted = true
   state.units.push(u)
   addLog(side, `${sideName(side)}购买 ${type.name}`)
-  if (side === 'red') setHint(`${type.name} 已部署，本回合不能行动`)
+  if (side === 'red') setHint(`${type.name} 已部署到生产槽，本回合即可行动`)
   render()
   return true
 }
@@ -332,6 +564,8 @@ function makeUnit(type, side, x, y) {
     y,
     hp: type.hp,
     maxHp: type.hp,
+    baseAtk: type.atk,
+    baseMaxHp: type.hp,
     atk: type.atk,
     range: type.range,
     move: type.move,
@@ -340,6 +574,47 @@ function makeUnit(type, side, x, y) {
     moveOrAttack: !!type.moveOrAttack,
     moved: false,
     acted: false,
+    kills: 0,
+    rank: 0,
+  }
+}
+
+// ───────── 地形 / 数值 ─────────
+function rangeAt(u, pos) {
+  return u.range + (isHill(pos.x, pos.y) ? 1 : 0)
+}
+
+function rangeOf(u) {
+  return rangeAt(u, u)
+}
+
+function damageOf(u) {
+  return Math.max(1, Math.round((u.atk * u.hp) / u.maxHp))
+}
+
+function damageTo(u, target) {
+  let mult = 1
+  // 树林提供掩护，受到的伤害降低 25%
+  if (isForest(target.x, target.y)) mult *= 0.75
+  // 沼泽毫无遮掩，受到的伤害增加 20%
+  if (isSwamp(target.x, target.y)) mult *= 1.2
+  return Math.max(1, Math.round(damageOf(u) * mult))
+}
+
+function splashOf(u) {
+  return Math.max(1, Math.round((u.splash * u.hp) / u.maxHp))
+}
+
+function creditKill(u) {
+  u.kills += 1
+  while (RANKS[u.rank + 1] && u.kills >= RANKS[u.rank + 1].kills) {
+    u.rank += 1
+    const r = RANKS[u.rank]
+    u.atk = Math.round(u.baseAtk * r.atk)
+    u.maxHp = Math.round(u.baseMaxHp * r.hp)
+    u.hp = u.maxHp
+    addLog(u.side, `${u.name} 晋升为 ${r.name}！攻击 ${u.atk}，生命回满 ${u.maxHp}`)
+    floatText(u.x, u.y, `晋升 ${r.name}`, 'rank')
   }
 }
 
@@ -371,14 +646,6 @@ function isBaseTile(x, y) {
 
 function enemyBasePos(side) {
   return BASE_POS[enemyOf(side)]
-}
-
-function damageOf(u) {
-  return Math.max(1, Math.round((u.atk * u.hp) / u.maxHp))
-}
-
-function splashOf(u) {
-  return Math.max(1, Math.round((u.splash * u.hp) / u.maxHp))
 }
 
 function selectUnit(u) {
@@ -430,13 +697,13 @@ function isEnemyBaseTile(side, x, y) {
 function canAttack(u, target) {
   if (u.acted || u.atk <= 0) return false
   if (u.moveOrAttack && u.moved) return false
-  return dist(u, target) <= u.range
+  return dist(u, target) <= rangeOf(u)
 }
 
 function canAttackBase(u) {
   if (u.acted || u.atk <= 0) return false
   if (u.moveOrAttack && u.moved) return false
-  return dist(u, enemyBasePos(u.side)) <= u.range
+  return dist(u, enemyBasePos(u.side)) <= rangeOf(u)
 }
 
 function doMove(u, x, y) {
@@ -450,7 +717,7 @@ function doMove(u, x, y) {
 }
 
 function doAttackUnit(u, target) {
-  const dmg = damageOf(u)
+  const dmg = damageTo(u, target)
   target.hp -= dmg
   u.acted = true
   u.moved = true
@@ -459,6 +726,9 @@ function doAttackUnit(u, target) {
   floatText(target.x, target.y, `-${dmg}`, 'dmg')
   pulse(unitEls.get(target.id))
   addLog(u.side, `${u.name} 攻击 ${target.name}，造成 ${dmg} 伤害`)
+
+  const killed = []
+  if (target.hp <= 0) killed.push(target)
 
   if (u.splash) {
     const sp = splashOf(u)
@@ -470,8 +740,11 @@ function doAttackUnit(u, target) {
       floatText(other.x, other.y, `-${sp}`, 'dmg')
       pulse(unitEls.get(other.id))
       addLog(u.side, `手榴弹溅射 ${other.name}，造成 ${sp} 伤害`)
+      if (other.hp <= 0) killed.push(other)
     }
   }
+
+  for (let i = 0; i < killed.length; i++) creditKill(u)
 
   cleanupDead()
   render()
@@ -503,37 +776,42 @@ function cleanupDead() {
   state.units = state.units.filter((u) => u.hp > 0)
 }
 
-// ───────── 可达范围 ─────────
+// ───────── 移动范围（树林 / 沼泽消耗 2 点移动力） ─────────
 function reachable(unit) {
   const blocked = new Set()
   for (const u of state.units) if (u.id !== unit.id) blocked.add(key(u.x, u.y))
   blocked.add(key(BASE_POS.red.x, BASE_POS.red.y))
   blocked.add(key(BASE_POS.blue.x, BASE_POS.blue.y))
 
-  const seen = new Set([key(unit.x, unit.y)])
-  const q = [{ x: unit.x, y: unit.y, d: 0 }]
-  const out = []
+  const best = new Map([[key(unit.x, unit.y), 0]])
+  const queue = [{ x: unit.x, y: unit.y, c: 0 }]
+  const out = new Map()
 
-  while (q.length) {
-    const cur = q.shift()
-    if (cur.d >= unit.move) continue
-    for (const [dx, dy] of [
-      [0, 1],
-      [0, -1],
-      [1, 0],
-      [-1, 0],
-    ]) {
+  while (queue.length) {
+    queue.sort((a, b) => a.c - b.c)
+    const cur = queue.shift()
+    if (cur.c !== best.get(key(cur.x, cur.y))) continue
+    if (cur.c >= unit.move) continue
+
+    for (const [dx, dy] of DIRS) {
       const nx = cur.x + dx
       const ny = cur.y + dy
       if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS) continue
       const k = key(nx, ny)
-      if (seen.has(k) || blocked.has(k) || ROCKS.has(k)) continue
-      seen.add(k)
-      out.push({ x: nx, y: ny })
-      q.push({ x: nx, y: ny, d: cur.d + 1 })
+      if (blocked.has(k)) continue
+
+      const step = moveCostAt(nx, ny)
+      if (!Number.isFinite(step)) continue
+      const nc = cur.c + step
+      if (nc > unit.move) continue
+      if (nc < (best.get(k) ?? Infinity)) {
+        best.set(k, nc)
+        out.set(k, { x: nx, y: ny })
+        queue.push({ x: nx, y: ny, c: nc })
+      }
     }
   }
-  return out
+  return [...out.values()]
 }
 
 function isMoveTile(u, x, y) {
@@ -624,7 +902,6 @@ function choosePurchase() {
 }
 
 function aiActUnit(u) {
-  // 工程师：已在敌方基地旁并开始占领，原地继续
   if (u.type === 'engineer' && state.baseProgress.blue > 0 && dist(u, enemyBasePos('blue')) <= 1) {
     u.acted = true
     u.moved = true
@@ -651,6 +928,9 @@ function aiActUnit(u) {
     } else {
       score = -objectiveDistance(u, pos) * 14 - dangerAt(u.side, pos) * 0.55
       if (!moved) score -= 35
+      if (isHill(pos.x, pos.y)) score += 10
+      else if (isForest(pos.x, pos.y)) score += 8
+      else if (isSwamp(pos.x, pos.y)) score -= 10
     }
 
     if (!best || score > best.score) {
@@ -671,12 +951,13 @@ function aiActUnit(u) {
 
 function targetsFrom(u, pos) {
   const list = []
+  const range = rangeAt(u, pos)
   for (const e of state.units) {
     if (e.side === u.side) continue
-    if (dist(pos, e) <= u.range) list.push({ kind: 'unit', unit: e })
+    if (dist(pos, e) <= range) list.push({ kind: 'unit', unit: e })
   }
   const eb = enemyBasePos(u.side)
-  if (dist(pos, eb) <= u.range) list.push({ kind: 'base' })
+  if (dist(pos, eb) <= range) list.push({ kind: 'base' })
   return list
 }
 
@@ -694,12 +975,13 @@ function chooseTarget(u, targets) {
 }
 
 function targetScore(u, t) {
-  const dmg = damageOf(u)
   if (t.kind === 'base') {
+    const dmg = damageOf(u)
     const hp = state.baseHp[enemyOf(u.side)]
     return 90 + dmg * 0.2 + (dmg >= hp ? 900 : 0)
   }
   const e = t.unit
+  const dmg = damageTo(u, e)
   let s = 100 + UNIT_TYPES[e.type].cost * 0.18
   if (dmg >= e.hp) s += 260
   s += (e.maxHp - e.hp) * 0.45
@@ -726,7 +1008,7 @@ function dangerAt(side, pos) {
   let danger = 0
   for (const e of state.units) {
     if (e.side === side) continue
-    if (dist(e, pos) <= e.range + e.move) danger += damageOf(e) * 0.4
+    if (dist(e, pos) <= rangeOf(e) + e.move) danger += damageOf(e) * 0.4
   }
   return danger
 }
@@ -759,9 +1041,10 @@ function renderCells() {
     for (let x = 0; x < COLS; x++) {
       const el = cellEls[y * COLS + x]
       const k = key(x, y)
+      const terrain = terrainAt(x, y)
       let cls = 'cell' + ((x + y) % 2 === 0 ? ' alt' : '')
+      if (terrain.key !== 'flat') cls += ' ' + terrain.key
 
-      if (ROCKS.has(k)) cls += ' rock'
       if (x === BASE_POS.red.x && y === BASE_POS.red.y) cls += ' base-red'
       if (x === BASE_POS.blue.x && y === BASE_POS.blue.y) cls += ' base-blue'
 
@@ -788,11 +1071,10 @@ function renderUnits() {
     let el = unitEls.get(u.id)
     if (!el) {
       el = document.createElement('div')
-      el.innerHTML = `<span class="u-emoji"></span><div class="u-hpbar"><i></i></div>`
+      el.innerHTML = `<span class="u-rank"></span><span class="u-emoji"></span><div class="u-hpbar"><i></i></div>`
       els.board.appendChild(el)
       unitEls.set(u.id, el)
 
-      // 出生动画，让新买的单位一眼可见
       const emoji = el.querySelector('.u-emoji')
       if (emoji && emoji.animate) {
         emoji.animate(
@@ -815,6 +1097,7 @@ function renderUnits() {
     el.style.setProperty('--ux', u.x)
     el.style.setProperty('--uy', u.y)
     el.querySelector('.u-emoji').textContent = u.emoji
+    el.querySelector('.u-rank').textContent = u.rank > 0 ? '★'.repeat(u.rank) : ''
 
     const pct = Math.max(0, Math.min(100, (u.hp / u.maxHp) * 100))
     const fill = el.querySelector('.u-hpbar i')
@@ -892,10 +1175,9 @@ function renderShop() {
 }
 
 function renderInfo() {
-  const id = state.hoverId || state.selectedId
-  const u = state.units.find((x) => x.id === id)
-  if (u) {
-    els.infoBody.innerHTML = unitInfoHtml(u)
+  const hovered = state.units.find((x) => x.id === state.hoverId)
+  if (hovered) {
+    els.infoBody.innerHTML = unitInfoHtml(hovered)
     return
   }
   if (state.hoverType) {
@@ -916,25 +1198,58 @@ function renderInfo() {
       <div class="info-desc">${t.desc}</div>`
     return
   }
+  if (state.hoverCell) {
+    els.infoBody.innerHTML = terrainInfoHtml(state.hoverCell.x, state.hoverCell.y)
+    return
+  }
+  const selected = getSelected()
+  if (selected) {
+    els.infoBody.innerHTML = unitInfoHtml(selected)
+    return
+  }
   els.infoBody.innerHTML = `<div class="info-empty">选中或悬停一个单位查看属性</div>`
+}
+
+function terrainInfoHtml(x, y) {
+  const t = terrainAt(x, y)
+  const cost = Number.isFinite(t.move) ? t.move : '—'
+  return `
+    <div class="info-head">
+      <span class="i-emoji">${t.icon}</span>
+      <span class="i-name">${t.name}</span>
+    </div>
+    <div class="info-grid">
+      <span>移动消耗 <b>${cost}</b></span>
+      <span>坐标 <b>${x}, ${y}</b></span>
+    </div>
+    <div class="info-desc">${t.effect}</div>`
 }
 
 function unitInfoHtml(u) {
   const status = u.acted ? '本回合已行动' : u.moved ? '已移动，可继续攻击' : '可移动 + 攻击'
-  const dmg = damageOf(u)
+  const rank = RANKS[u.rank]
+  const t = terrainAt(u.x, u.y)
+  const terrain =
+    t.key === 'flat' ? '平地' : `${t.name}（${t.effect}）`
   return `
     <div class="info-head">
       <span class="i-emoji">${u.emoji}</span>
       <span class="i-name">${u.name}</span>
       <span class="i-side ${u.side}">${sideName(u.side)}</span>
     </div>
+    <div class="info-rank">
+      <span class="rank-name ${u.rank ? 'has-rank' : ''}">${rank.name}</span>
+      <span class="rank-stars">${u.rank ? '★'.repeat(u.rank) : ''}</span>
+      <span class="rank-kills">击杀 ${u.kills}</span>
+      ${u.rank < RANKS.length - 1 ? `<span class="rank-next">距下一军衔 ${RANKS[u.rank + 1].kills - u.kills}</span>` : '<span class="rank-next">已达最高军衔</span>'}
+    </div>
     <div class="info-grid">
       <span>生命 <b>${Math.max(0, u.hp)} / ${u.maxHp}</b></span>
-      <span>当前伤害 <b>${u.atk ? dmg : '—'}</b></span>
-      <span>射程 <b>${u.range || '—'}</b></span>
+      <span>当前伤害 <b>${u.atk ? damageOf(u) : '—'}</b></span>
+      <span>射程 <b>${u.range || '—'}${isHill(u.x, u.y) && u.range ? ' (+1)' : ''}</b></span>
       <span>移动 <b>${u.move}</b></span>
       <span>坐标 <b>${u.x}, ${u.y}</b></span>
-      <span>${u.splash ? '溅射 <b>' + splashOf(u) + '</b>' : ''}</span>
+      <span>地形 <b>${terrain}</b></span>
     </div>
     <div class="info-status">${status}</div>`
 }
@@ -1005,17 +1320,23 @@ function bindEvents() {
   els.board.addEventListener('mouseover', (e) => {
     const cell = e.target.closest('.cell')
     if (!cell) return
-    const u = unitAt(Number(cell.dataset.x), Number(cell.dataset.y))
+    const x = Number(cell.dataset.x)
+    const y = Number(cell.dataset.y)
+    const u = unitAt(x, y)
     const id = u ? u.id : null
-    if (state.hoverId !== id) {
+    const cellChanged =
+      !u && (!state.hoverCell || state.hoverCell.x !== x || state.hoverCell.y !== y)
+    if (state.hoverId !== id || cellChanged) {
       state.hoverId = id
+      state.hoverCell = u ? null : { x, y }
       renderInfo()
     }
   })
 
   els.board.addEventListener('mouseleave', () => {
-    if (state.hoverId) {
+    if (state.hoverId || state.hoverCell) {
       state.hoverId = null
+      state.hoverCell = null
       renderInfo()
     }
   })
@@ -1112,6 +1433,16 @@ function buildShop() {
   }).join('')
 }
 
+function buildLegend() {
+  const order = ['.', 'H', 'F', 'M', 'B', 'W', '#']
+  els.legend.innerHTML = order
+    .map((ch) => {
+      const t = TERRAIN[ch]
+      return `<span class="lg-item" title="${t.effect}"><span class="lg-icon">${t.icon}</span>${t.name}</span>`
+    })
+    .join('')
+}
+
 function buildLevels() {
   els.levelGrid.innerHTML = LEVELS.map(
     (l) => `
@@ -1129,18 +1460,21 @@ function buildLevels() {
 // ───────── 启动 ─────────
 function boot() {
   const ids = [
-    'board', 'banner', 'hint', 'turnSide', 'endTurnBtn',
+    'board', 'banner', 'hint', 'legend', 'turnSide', 'endTurnBtn',
     'redMoney', 'blueMoney', 'redBaseHp', 'blueBaseHp', 'redBaseFill', 'blueBaseFill',
     'redPanel', 'bluePanel', 'shop', 'shopMoney', 'infoBody', 'log',
     'overlay', 'overlayIcon', 'overlayTitle', 'overlaySub', 'restartBtn',
     'helpBtn', 'helpOverlay', 'closeHelpBtn',
     'menuOverlay', 'pvpBtn', 'levelGrid', 'menuHelpBtn', 'menuBtn', 'resumeBtn',
-    'redIncome', 'blueIncome', 'redCapture', 'blueCapture', 'modeTag',
+    'redIncome', 'blueIncome', 'redCapture', 'blueCapture', 'modeTag', 'versionTag',
   ]
   for (const id of ids) els[id] = document.getElementById(id)
 
+  if (els.versionTag) els.versionTag.textContent = VERSION
+
   buildShop()
   buildLevels()
+  buildLegend()
   bindEvents()
   init('pvp', 1)
   els.resumeBtn.hidden = true
@@ -1149,11 +1483,15 @@ function boot() {
 
 boot()
 
-// 调试接口：浏览器控制台可用 __war.state 查看对局状态
+// 调试接口
 window.__war = {
   get state() {
     return state
   },
+  get map() {
+    return MAP
+  },
+  generateMap,
   init,
   endTurn,
   render,
@@ -1165,4 +1503,6 @@ window.__war = {
   canHumanAct,
   UNIT_TYPES,
   LEVELS,
+  RANKS,
+  VERSION,
 }
