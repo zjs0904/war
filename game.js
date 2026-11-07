@@ -317,6 +317,7 @@ function doBuy(typeKey, side) {
   state.units.push(u)
   addLog(side, `${sideName(side)}购买 ${type.name}`)
   if (side === 'red') setHint(`${type.name} 已部署，本回合不能行动`)
+  render()
   return true
 }
 
