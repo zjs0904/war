@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0d1210" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚔️</text></svg>"
+    />
+    <title>小小大战争 · 双人对战</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="player-panel red" id="redPanel">
+          <div class="pp-head">
+            <span class="pp-side">红方</span>
+            <span class="pp-money">💰 <b id="redMoney">0</b></span>
+          </div>
+          <div class="pp-base">
+            <span class="pp-base-icon">🏰</span>
+            <div class="pp-bar"><i id="redBaseFill"></i></div>
+            <span class="pp-base-hp" id="redBaseHp">1000</span>
+          </div>
+          <div class="pp-meta">
+            <span class="pp-income" id="redIncome">+200/回合</span>
+            <span class="pp-capture" id="redCapture"></span>
+          </div>
+        </div>
+
+        <div class="turn-box">
+          <div class="turn-label">当前回合</div>
+          <div class="turn-side" id="turnSide">红方</div>
+          <div class="mode-tag" id="modeTag" hidden></div>
+          <div class="turn-buttons">
+            <button class="btn btn-end" id="endTurnBtn" type="button">结束回合</button>
+            <button class="btn btn-icon" id="helpBtn" type="button" aria-label="玩法说明">?</button>
+            <button class="btn btn-icon" id="menuBtn" type="button" aria-label="主菜单">☰</button>
+          </div>
+          <div class="turn-tip">空格 / 回车</div>
+        </div>
+
+        <div class="player-panel blue" id="bluePanel">
+          <div class="pp-head">
+            <span class="pp-side">蓝方</span>
+            <span class="pp-money">💰 <b id="blueMoney">0</b></span>
+          </div>
+          <div class="pp-base">
+            <span class="pp-base-icon">🏰</span>
+            <div class="pp-bar"><i id="blueBaseFill"></i></div>
+            <span class="pp-base-hp" id="blueBaseHp">1000</span>
+          </div>
+          <div class="pp-meta">
+            <span class="pp-income" id="blueIncome">+200/回合</span>
+            <span class="pp-capture" id="blueCapture"></span>
+          </div>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="board-area">
+          <div class="board-frame">
+            <div class="board" id="board"></div>
+            <div class="banner" id="banner"></div>
+          </div>
+          <div class="hint" id="hint">点击己方单位选择，绿色格可移动，红色格可攻击</div>
+        </section>
+
+        <aside class="side">
+          <div class="panel shop-panel">
+            <div class="panel-head">
+              <span>兵营</span>
+              <span class="shop-money">💰 <b id="shopMoney">0</b></span>
+            </div>
+            <div class="shop" id="shop"></div>
+          </div>
+
+          <div class="panel info-panel">
+            <div class="panel-head">单位情报</div>
+            <div class="info-body" id="infoBody">
+              <div class="info-empty">选中或悬停一个单位查看属性</div>
+            </div>
+          </div>
+
+          <div class="panel log-panel">
+            <div class="panel-head">战报</div>
+            <div class="log" id="log"></div>
+          </div>
+        </aside>
+      </main>
+
+      <!-- 结算 -->
+      <div class="overlay" id="overlay" hidden>
+        <div class="overlay-card">
+          <div class="overlay-icon" id="overlayIcon">🏆</div>
+          <h1 id="overlayTitle">红方胜利</h1>
+          <p id="overlaySub">敌方基地被摧毁</p>
+          <button class="btn btn-end" id="restartBtn" type="button">再来一局</button>
+        </div>
+      </div>
+
+      <!-- 玩法说明 -->
+      <div class="overlay" id="helpOverlay" hidden>
+        <div class="overlay-card help-card">
+          <div class="overlay-icon">📖</div>
+          <h1>玩法说明</h1>
+          <ul class="help-list">
+            <li><b>轮流行动</b>：红蓝双方交替，每回合开始获得 150 金币，每座油田额外 +50。</li>
+            <li><b>购买单位</b>：点击右侧兵种卡片，单位出现在基地旁，当回合不能行动。</li>
+            <li><b>行动</b>：点击己方单位选中，绿格移动、红格攻击，之后点「结束回合」交给对方。</li>
+            <li><b>受伤变弱</b>：单位的伤害 = 基础攻击 × 当前生命比例，残血单位打不出全额伤害。</li>
+            <li><b>射程</b>：步兵 2、狙击手 6、手榴弹兵 3、突击队员 2。</li>
+            <li><b>狙击手</b>：伤害 200，秒杀步兵；但移动后不能攻击。</li>
+            <li><b>工程师</b>：没有攻击力。站在油田上，下一回合开始占领油田；站在敌方基地旁 2 个回合可占领基地直接获胜。</li>
+            <li><b>手榴弹兵</b>：范围伤害，对目标四周的敌人造成溅射。</li>
+            <li><b>胜利条件</b>：摧毁敌方基地，或用工程师占领敌方基地。</li>
+          </ul>
+          <button class="btn btn-end" id="closeHelpBtn" type="button">知道了</button>
+        </div>
+      </div>
+
+      <!-- 主菜单 -->
+      <div class="overlay" id="menuOverlay" hidden>
+        <div class="overlay-card menu-card">
+          <div class="menu-logo">⚔️</div>
+          <h1>小小大战争</h1>
+          <p class="menu-sub">红蓝两军 · 回合制对决</p>
+
+          <button class="menu-btn" id="pvpBtn" type="button">
+            <span class="mb-icon">👥</span>
+            <span class="mb-text">
+              <span class="mb-main">双人对战</span>
+              <span class="mb-sub">同一台电脑轮流操作</span>
+            </span>
+          </button>
+
+          <div class="menu-label">关卡模式 · 对战电脑</div>
+          <div class="level-grid" id="levelGrid"></div>
+
+          <button class="menu-link" id="resumeBtn" type="button" hidden>返回当前对局</button>
+          <button class="menu-link" id="menuHelpBtn" type="button">查看玩法说明</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="./game.js"></script>
+  </body>
+</html>
