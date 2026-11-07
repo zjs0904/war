@@ -445,8 +445,21 @@ button {
 }
 
 .unit.spent {
-  opacity: 0.45;
-  filter: grayscale(0.7);
+  opacity: 0.82;
+}
+
+/* 本回合已经行动过的标记 */
+.unit.spent::after {
+  content: '';
+  position: absolute;
+  top: 13%;
+  right: 13%;
+  width: calc(var(--cell) * 0.15);
+  height: calc(var(--cell) * 0.15);
+  border-radius: 50%;
+  background: #97a291;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+  z-index: 4;
 }
 
 .unit.selected .u-emoji {

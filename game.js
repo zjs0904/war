@@ -791,6 +791,19 @@ function renderUnits() {
       el.innerHTML = `<span class="u-emoji"></span><div class="u-hpbar"><i></i></div>`
       els.board.appendChild(el)
       unitEls.set(u.id, el)
+
+      // 出生动画，让新买的单位一眼可见
+      const emoji = el.querySelector('.u-emoji')
+      if (emoji && emoji.animate) {
+        emoji.animate(
+          [
+            { transform: 'scale(0.2)', opacity: 0 },
+            { transform: 'scale(1.3)', opacity: 1, offset: 0.65 },
+            { transform: 'scale(1)', opacity: 1 },
+          ],
+          { duration: 420, easing: 'ease-out' }
+        )
+      }
     }
 
     el.className =
