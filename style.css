@@ -311,8 +311,8 @@ button {
 }
 
 .board {
-  /* 21 列；预留顶栏 / 侧栏 / 边框后按视口自适应格宽 */
-  --cell: clamp(24px, calc((100vw - 420px) / 21), 46px);
+  /* 19 列；预留顶栏 / 侧栏 / 边框后按视口自适应格宽 */
+  --cell: clamp(28px, calc((100vw - 420px) / 19), 50px);
   position: relative;
   display: grid;
   grid-template-columns: repeat(var(--cols, 21), var(--cell));
@@ -1048,7 +1048,7 @@ button {
 /* ───────── 响应式 ───────── */
 @media (max-width: 1180px) {
   .board {
-    --cell: clamp(24px, calc((100vw - 380px) / 21), 44px);
+    --cell: clamp(26px, calc((100vw - 380px) / 19), 48px);
   }
 
   .side {
@@ -1076,7 +1076,7 @@ button {
   }
 
   .board {
-    --cell: clamp(26px, calc((100vw - 44px) / 21), 44px);
+    --cell: clamp(28px, calc((100vw - 44px) / 19), 48px);
   }
 
   .side {
@@ -1126,7 +1126,7 @@ button {
 
 @media (max-width: 560px) {
   .board {
-    --cell: 26px;
+    --cell: 30px;
   }
 
   .board-frame {

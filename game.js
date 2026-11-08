@@ -2,15 +2,15 @@
 
 /* ============================================================
  * 小小大战争 · 双人对战 / 关卡模式
- * 21×13 随机战场：高地 / 树林 / 沼泽 / 城墙 / 城门 / 岩石
+ * 19×11 随机战场：高地 / 树林 / 沼泽 / 城墙 / 城门 / 岩石
  * 每局随机生成，两侧地形不镜像；单位击杀可晋升军衔
  * ============================================================ */
 
-const VERSION = 'v1.12'
+const VERSION = 'v1.14'
 
 // ───────── 常量 ─────────
-const COLS = 21
-const ROWS = 13
+const COLS = 19
+const ROWS = 11
 
 const BASE_MAX_HP = 1000
 const START_MONEY = 400
@@ -26,29 +26,32 @@ const DIRS = [
 ]
 
 const BASE_POS = {
-  red: { x: 0, y: 6 },
-  blue: { x: 20, y: 6 },
+  red: { x: 0, y: 5 },
+  blue: { x: 18, y: 5 },
 }
 
 // 兵营前的生产槽。注意避开基地相邻格（基地前的空格留给工程师占领）
 const SPAWN_POS = {
   red: [
+    { x: 2, y: 4 },
     { x: 2, y: 5 },
     { x: 2, y: 6 },
-    { x: 2, y: 7 },
   ],
   blue: [
-    { x: 18, y: 5 },
-    { x: 18, y: 6 },
-    { x: 18, y: 7 },
+    { x: 16, y: 4 },
+    { x: 16, y: 5 },
+    { x: 16, y: 6 },
   ],
 }
 
+// 油田：红蓝各 2 座 + 2 座中立（中立油田左右各一座，避免只在一侧破坏平衡）
 const FIELD_POS = [
-  { x: 5, y: 4 },
-  { x: 5, y: 8 },
-  { x: 15, y: 4 },
-  { x: 15, y: 8 },
+  { x: 4, y: 3, owner: 'red' },
+  { x: 4, y: 7, owner: 'red' },
+  { x: 14, y: 3, owner: 'blue' },
+  { x: 14, y: 7, owner: 'blue' },
+  { x: 6, y: 5, owner: null },
+  { x: 12, y: 5, owner: null },
 ]
 
 const key = (x, y) => `${x},${y}`
@@ -89,21 +92,19 @@ function applyMap(rows) {
   })
 }
 
-// 生成失败时的兜底地图（对称手绘，中央城墙 + 两座城门）
+// 生成失败时的兜底地图（19×11，对称手绘，中央城墙 + 两座城门）
 const FALLBACK_MAP = [
-  '.....................',
-  '....#.....X.....#....',
-  '..FF..H...X...H..FF..',
-  '....#.....G.....#....',
-  '..M.F.....X.....F.M..',
-  '......#...X...#......',
-  '..........X..........',
-  '......#...X...#......',
-  '..M.F.....X.....F.M..',
-  '....#.....G.....#....',
-  '..FF..H...X...H..FF..',
-  '....#.....X.....#....',
-  '.....................',
+  '.........X.........',
+  '...#.....X.....#...',
+  '..FF..H..X..H..FF..',
+  '..#......G.....#...',
+  '.M..F....X....F..M.',
+  '.....#...X...#.....',
+  '.M..F....X....F..M.',
+  '..#......G.....#...',
+  '..FF..H..X..H..FF..',
+  '...#.....X.....#...',
+  '.........X.........',
 ]
 
 // ───────── 随机地图 ─────────
@@ -181,14 +182,15 @@ function tryGenerateMap() {
   for (const f of FIELD_POS) reserve(f.x, f.y)
 
   // 纵贯地图的随机城墙：位置、弯折随机，留 2~3 座城门
-  let wx = 8 + randInt(4)
+  let wx = 8 + randInt(3)
   const wallX = []
   for (let y = 0; y < ROWS; y++) {
-    wx = Math.max(7, Math.min(13, wx + randInt(3) - 1))
+    wx = Math.max(7, Math.min(11, wx + randInt(3) - 1))
     grid[y][wx] = 'X'
     wallX.push(wx)
   }
-  const gateRows = shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]).slice(0, 2 + randInt(2))
+  const innerRows = Array.from({ length: ROWS - 2 }, (_, i) => i + 1)
+  const gateRows = shuffle(innerRows).slice(0, 2 + randInt(2))
   for (const y of gateRows) {
     grid[y][wallX[y]] = 'G'
     reserve(wallX[y] - 1, y)
@@ -279,11 +281,11 @@ const UNIT_TYPES = {
     key: 'infantry',
     name: '步兵',
     emoji: '🪖',
-    cost: 50,
+    cost: 75,
     hp: 100,
     atk: 65,
     range: 3,
-    move: 3,
+    move: 4,
     desc: '最便宜的单位。射程 3，一刀打掉对方 65% 生命。站在高地上射程 +2。',
   },
   sniper: {
@@ -294,7 +296,7 @@ const UNIT_TYPES = {
     hp: 60,
     atk: 200,
     range: 6,
-    move: 2,
+    move: 3,
     baseDamageMul: 0.5,
     desc: '射程 6，一击必杀步兵，对基地只造成 50% 伤害。移动后仍可攻击；站上高地射程可达 8。',
   },
@@ -302,11 +304,11 @@ const UNIT_TYPES = {
     key: 'engineer',
     name: '工程师',
     emoji: '🔧',
-    cost: 50,
+    cost: 75,
     hp: 50,
     atk: 0,
     range: 0,
-    move: 3,
+    move: 4,
     canCapture: true,
     desc: '没有攻击力。站上油田一回合后占领；在敌方基地旁站 2 回合可占领基地获胜。',
   },
@@ -318,7 +320,7 @@ const UNIT_TYPES = {
     hp: 90,
     atk: 90,
     range: 4,
-    move: 2,
+    move: 3,
     splash: 40,
     desc: '射程 4，对目标周围所有单位（包括友军）造成 40 溅射伤害；曲射攻击无视地形遮挡。站上高地射程 +2。',
   },
@@ -330,8 +332,8 @@ const UNIT_TYPES = {
     hp: 240,
     atk: 160,
     range: 3,
-    move: 4,
-    desc: '最昂贵的单位。240 生命、160 攻击、移动 4、射程 3，能单挑大部分单位。',
+    move: 5,
+    desc: '最昂贵的单位。240 生命、160 攻击、移动 5、射程 3，能单挑大部分单位。',
   },
 }
 
@@ -376,10 +378,7 @@ function init(mode = 'pvp', level = 1) {
     baseHp: { red: BASE_MAX_HP, blue: BASE_MAX_HP },
     baseProgress: { red: 0, blue: 0 },
     units: [],
-    fields: FIELD_POS.map((p, i) => ({
-      ...p,
-      owner: i < FIELD_POS.length / 2 ? 'red' : 'blue',
-    })),
+    fields: FIELD_POS.map((f) => ({ x: f.x, y: f.y, owner: f.owner })),
     selectedId: null,
     hoverId: null,
     hoverCell: null,
