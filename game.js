@@ -2,11 +2,11 @@
 
 /* ============================================================
  * 小小大战争 · 双人对战 / 关卡模式
- * 21×13 随机战场：高地 / 树林 / 沼泽 / 河流 / 桥梁 / 岩石
+ * 21×13 随机战场：高地 / 树林 / 沼泽 / 城墙 / 城门 / 岩石
  * 每局随机生成，两侧地形不镜像；单位击杀可晋升军衔
  * ============================================================ */
 
-const VERSION = 'v1.7'
+const VERSION = 'v1.12'
 
 // ───────── 常量 ─────────
 const COLS = 21
@@ -56,15 +56,15 @@ const key = (x, y) => `${x},${y}`
 // 地形表：move 为移动消耗，Infinity 表示不可通行
 const TERRAIN = {
   '.': { key: 'flat', name: '平地', icon: '▦', move: 1, effect: '无特殊效果' },
-  H: { key: 'hill', name: '高地', icon: '⛰️', move: 1, effect: '射程 +1' },
-  F: { key: 'forest', name: '树林', icon: '🌲', move: 2, effect: '受到的伤害 -25%' },
+  H: { key: 'hill', name: '高地', icon: '⛰️', move: 1, effect: '射程 +2' },
+  F: { key: 'forest', name: '树林', icon: '🌲', move: 2, effect: '受到的伤害 -25%，阻挡远程攻击' },
   M: { key: 'swamp', name: '沼泽', icon: '🌿', move: 2, effect: '受到的伤害 +20%' },
-  B: { key: 'bridge', name: '桥梁', icon: '🌉', move: 1, effect: '跨越水域的唯一通道' },
-  W: { key: 'water', name: '水域', icon: '🌊', move: Infinity, effect: '无法通行' },
-  '#': { key: 'rock', name: '岩石', icon: '🪨', move: Infinity, effect: '无法通行' },
+  G: { key: 'gate', name: '城门', icon: '🚪', move: 1, effect: '穿过城墙的通道' },
+  X: { key: 'wall', name: '城墙', icon: '🧱', move: Infinity, effect: '无法通行，阻挡远程攻击' },
+  '#': { key: 'rock', name: '岩石', icon: '🪨', move: Infinity, effect: '无法通行，阻挡远程攻击' },
 }
 
-// 地形字符：. 平地  H 高地  F 树林  M 沼泽  B 桥梁  W 水域  # 岩石
+// 地形字符：. 平地  H 高地  F 树林  M 沼泽  G 城门  X 城墙  # 岩石
 const inBounds = (x, y) => x >= 0 && y >= 0 && x < COLS && y < ROWS
 const randInt = (n) => Math.floor(Math.random() * n)
 
@@ -89,20 +89,20 @@ function applyMap(rows) {
   })
 }
 
-// 生成失败时的兜底地图（对称手绘）
+// 生成失败时的兜底地图（对称手绘，中央城墙 + 两座城门）
 const FALLBACK_MAP = [
   '.....................',
-  '...#....#....#....#..',
-  '..FF...H.....H...FF..',
-  '....#..M.....M..#....',
-  '..M.F..H.....H..F.M..',
-  '......WBWWWWWBW......',
-  '......WBWWWWWBW......',
-  '......WBWWWWWBW......',
-  '..M.F..H.....H..F.M..',
-  '....#..M.....M..#....',
-  '..FF...H.....H...FF..',
-  '..#....#....#....#...',
+  '....#.....X.....#....',
+  '..FF..H...X...H..FF..',
+  '....#.....G.....#....',
+  '..M.F.....X.....F.M..',
+  '......#...X...#......',
+  '..........X..........',
+  '......#...X...#......',
+  '..M.F.....X.....F.M..',
+  '....#.....G.....#....',
+  '..FF..H...X...H..FF..',
+  '....#.....X.....#....',
   '.....................',
 ]
 
@@ -180,21 +180,19 @@ function tryGenerateMap() {
   }
   for (const f of FIELD_POS) reserve(f.x, f.y)
 
-  // 纵贯地图的随机河流：位置、弯折、宽度随机，2~3 座桥
-  const width = Math.random() < 0.35 ? 2 : 1
-  let rx = 8 + randInt(4)
-  const riverX = []
+  // 纵贯地图的随机城墙：位置、弯折随机，留 2~3 座城门
+  let wx = 8 + randInt(4)
+  const wallX = []
   for (let y = 0; y < ROWS; y++) {
-    rx = Math.max(7, Math.min(12, rx + randInt(3) - 1))
-    for (let w = 0; w < width; w++) grid[y][rx + w] = 'W'
-    riverX.push(rx)
+    wx = Math.max(7, Math.min(13, wx + randInt(3) - 1))
+    grid[y][wx] = 'X'
+    wallX.push(wx)
   }
-  const bridgeRows = shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]).slice(0, 2 + randInt(2))
-  for (const y of bridgeRows) {
-    const x = riverX[y]
-    for (let w = 0; w < width; w++) grid[y][x + w] = 'B'
-    reserve(x - 1, y)
-    reserve(x + width, y)
+  const gateRows = shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]).slice(0, 2 + randInt(2))
+  for (const y of gateRows) {
+    grid[y][wallX[y]] = 'G'
+    reserve(wallX[y] - 1, y)
+    reserve(wallX[y] + 1, y)
   }
 
   // 两侧各自随机生成地形簇，不做镜像
@@ -228,6 +226,45 @@ const isHill = (x, y) => TERRAIN_TILES.hill.has(key(x, y))
 const isForest = (x, y) => TERRAIN_TILES.forest.has(key(x, y))
 const isSwamp = (x, y) => TERRAIN_TILES.swamp.has(key(x, y))
 
+// 视线阻挡：城墙 / 树林 / 岩石。手榴弹兵曲射，不受影响
+const BLOCKS_SIGHT = new Set(['wall', 'forest', 'rock'])
+const blocksSightAt = (x, y) => BLOCKS_SIGHT.has(terrainAt(x, y).key)
+
+function hasLineOfSight(from, to) {
+  let x0 = from.x
+  let y0 = from.y
+  const dx = Math.abs(to.x - x0)
+  const dy = Math.abs(to.y - y0)
+  const sx = x0 < to.x ? 1 : -1
+  const sy = y0 < to.y ? 1 : -1
+  let err = dx - dy
+
+  while (x0 !== to.x || y0 !== to.y) {
+    const e2 = 2 * err
+    if (e2 > -dy && e2 < dx) {
+      // 对角穿过格子拐角时，两条正交边都不能有遮挡，
+      // 否则可以顺着城墙的斜缝把子弹打过去
+      if (blocksSightAt(x0 + sx, y0) || blocksSightAt(x0, y0 + sy)) return false
+      err += dx - dy
+      x0 += sx
+      y0 += sy
+    } else if (e2 > -dy) {
+      err -= dy
+      x0 += sx
+    } else if (e2 < dx) {
+      err += dx
+      y0 += sy
+    } else {
+      break
+    }
+    if (x0 === to.x && y0 === to.y) break
+    if (blocksSightAt(x0, y0)) return false
+  }
+  return true
+}
+
+const canSee = (u, target) => u.type === 'grenadier' || hasLineOfSight(u, target)
+
 // 军衔：击杀数达到门槛晋升，攻击与生命上限提升，并回满血
 const RANKS = [
   { name: '新兵', kills: 0, atk: 1.0, hp: 1.0 },
@@ -242,29 +279,30 @@ const UNIT_TYPES = {
     key: 'infantry',
     name: '步兵',
     emoji: '🪖',
-    cost: 75,
+    cost: 50,
     hp: 100,
-    atk: 75,
-    range: 2,
+    atk: 65,
+    range: 3,
     move: 3,
-    desc: '最基础的单位。射程 2，对砍一刀打掉对方 75% 生命。站在高地上射程 +1。',
+    desc: '最便宜的单位。射程 3，一刀打掉对方 65% 生命。站在高地上射程 +2。',
   },
   sniper: {
     key: 'sniper',
     name: '狙击手',
     emoji: '🎯',
-    cost: 200,
+    cost: 250,
     hp: 60,
     atk: 200,
     range: 6,
     move: 2,
-    desc: '射程 6，一击必杀步兵。移动后仍可攻击；站上高地射程可达 7。',
+    baseDamageMul: 0.5,
+    desc: '射程 6，一击必杀步兵，对基地只造成 50% 伤害。移动后仍可攻击；站上高地射程可达 8。',
   },
   engineer: {
     key: 'engineer',
     name: '工程师',
     emoji: '🔧',
-    cost: 100,
+    cost: 50,
     hp: 50,
     atk: 0,
     range: 0,
@@ -278,11 +316,11 @@ const UNIT_TYPES = {
     emoji: '💣',
     cost: 200,
     hp: 90,
-    atk: 80,
-    range: 3,
+    atk: 90,
+    range: 4,
     move: 2,
     splash: 40,
-    desc: '射程 3，对目标周围敌人造成 40 溅射伤害。站上高地射程 +1。',
+    desc: '射程 4，对目标周围所有单位（包括友军）造成 40 溅射伤害；曲射攻击无视地形遮挡。站上高地射程 +2。',
   },
   commando: {
     key: 'commando',
@@ -291,9 +329,9 @@ const UNIT_TYPES = {
     cost: 700,
     hp: 240,
     atk: 160,
-    range: 2,
+    range: 3,
     move: 4,
-    desc: '最昂贵的单位。240 生命、160 攻击、移动 4、射程 2，能单挑大部分单位。',
+    desc: '最昂贵的单位。240 生命、160 攻击、移动 4、射程 3，能单挑大部分单位。',
   },
 }
 
@@ -572,6 +610,7 @@ function makeUnit(type, side, x, y) {
     splash: type.splash || 0,
     canCapture: !!type.canCapture,
     moveOrAttack: !!type.moveOrAttack,
+    baseDamageMul: type.baseDamageMul ?? 1,
     moved: false,
     acted: false,
     kills: 0,
@@ -581,7 +620,7 @@ function makeUnit(type, side, x, y) {
 
 // ───────── 地形 / 数值 ─────────
 function rangeAt(u, pos) {
-  return u.range + (isHill(pos.x, pos.y) ? 1 : 0)
+  return u.range + (isHill(pos.x, pos.y) ? 2 : 0)
 }
 
 function rangeOf(u) {
@@ -590,6 +629,11 @@ function rangeOf(u) {
 
 function damageOf(u) {
   return Math.max(1, Math.round((u.atk * u.hp) / u.maxHp))
+}
+
+// 对基地伤害（狙击手只有 50%）
+function baseDamageOf(u) {
+  return Math.max(1, Math.round(damageOf(u) * (u.baseDamageMul ?? 1)))
 }
 
 function damageTo(u, target) {
@@ -697,13 +741,16 @@ function isEnemyBaseTile(side, x, y) {
 function canAttack(u, target) {
   if (u.acted || u.atk <= 0) return false
   if (u.moveOrAttack && u.moved) return false
-  return dist(u, target) <= rangeOf(u)
+  if (dist(u, target) > rangeOf(u)) return false
+  return canSee(u, target)
 }
 
 function canAttackBase(u) {
   if (u.acted || u.atk <= 0) return false
   if (u.moveOrAttack && u.moved) return false
-  return dist(u, enemyBasePos(u.side)) <= rangeOf(u)
+  const b = enemyBasePos(u.side)
+  if (dist(u, b) > rangeOf(u)) return false
+  return canSee(u, b)
 }
 
 function doMove(u, x, y) {
@@ -727,24 +774,25 @@ function doAttackUnit(u, target) {
   pulse(unitEls.get(target.id))
   addLog(u.side, `${u.name} 攻击 ${target.name}，造成 ${dmg} 伤害`)
 
-  const killed = []
-  if (target.hp <= 0) killed.push(target)
+  const killedEnemies = []
+  if (target.hp <= 0) killedEnemies.push(target)
 
   if (u.splash) {
     const sp = splashOf(u)
     for (const other of state.units) {
       if (other.id === target.id) continue
-      if (other.side === u.side) continue
+      if (other.id === u.id) continue // 自己不会被自己的手榴弹炸到
       if (dist(other, target) !== 1) continue
       other.hp -= sp
       floatText(other.x, other.y, `-${sp}`, 'dmg')
       pulse(unitEls.get(other.id))
-      addLog(u.side, `手榴弹溅射 ${other.name}，造成 ${sp} 伤害`)
-      if (other.hp <= 0) killed.push(other)
+      const friendly = other.side === u.side
+      addLog(u.side, `手榴弹溅射 ${friendly ? '友军 ' : ''}${other.name}，造成 ${sp} 伤害`)
+      if (other.hp <= 0 && !friendly) killedEnemies.push(other)
     }
   }
 
-  for (let i = 0; i < killed.length; i++) creditKill(u)
+  for (let i = 0; i < killedEnemies.length; i++) creditKill(u)
 
   cleanupDead()
   render()
@@ -753,7 +801,7 @@ function doAttackUnit(u, target) {
 function doAttackBase(u) {
   const side = enemyOf(u.side)
   const b = BASE_POS[side]
-  const dmg = damageOf(u)
+  const dmg = baseDamageOf(u)
   state.baseHp[side] -= dmg
   u.acted = true
   u.moved = true
@@ -952,12 +1000,15 @@ function aiActUnit(u) {
 function targetsFrom(u, pos) {
   const list = []
   const range = rangeAt(u, pos)
+  const canSeeFrom = (target) => u.type === 'grenadier' || hasLineOfSight(pos, target)
   for (const e of state.units) {
     if (e.side === u.side) continue
-    if (dist(pos, e) <= range) list.push({ kind: 'unit', unit: e })
+    if (dist(pos, e) > range) continue
+    if (!canSeeFrom(e)) continue
+    list.push({ kind: 'unit', unit: e })
   }
   const eb = enemyBasePos(u.side)
-  if (dist(pos, eb) <= range) list.push({ kind: 'base' })
+  if (dist(pos, eb) <= range && canSeeFrom(eb)) list.push({ kind: 'base' })
   return list
 }
 
@@ -976,7 +1027,7 @@ function chooseTarget(u, targets) {
 
 function targetScore(u, t) {
   if (t.kind === 'base') {
-    const dmg = damageOf(u)
+    const dmg = baseDamageOf(u)
     const hp = state.baseHp[enemyOf(u.side)]
     return 90 + dmg * 0.2 + (dmg >= hp ? 900 : 0)
   }
@@ -986,6 +1037,16 @@ function targetScore(u, t) {
   if (dmg >= e.hp) s += 260
   s += (e.maxHp - e.hp) * 0.45
   if (e.type === 'engineer') s += 40
+
+  // 手榴弹兵会误伤友军，尽量别往自己人身上炸
+  if (u.splash) {
+    const sp = splashOf(u)
+    for (const ally of state.units) {
+      if (ally.side !== u.side || ally.id === u.id) continue
+      if (dist(ally, e) !== 1) continue
+      s -= sp >= ally.hp ? 500 : 60
+    }
+  }
   return s
 }
 
@@ -1246,10 +1307,11 @@ function unitInfoHtml(u) {
     <div class="info-grid">
       <span>生命 <b>${Math.max(0, u.hp)} / ${u.maxHp}</b></span>
       <span>当前伤害 <b>${u.atk ? damageOf(u) : '—'}</b></span>
-      <span>射程 <b>${u.range || '—'}${isHill(u.x, u.y) && u.range ? ' (+1)' : ''}</b></span>
+      <span>射程 <b>${u.range || '—'}${isHill(u.x, u.y) && u.range ? ' (+2)' : ''}</b></span>
       <span>移动 <b>${u.move}</b></span>
       <span>坐标 <b>${u.x}, ${u.y}</b></span>
       <span>地形 <b>${terrain}</b></span>
+      ${u.baseDamageMul < 1 ? `<span>对基地 <b>${Math.round(u.baseDamageMul * 100)}%</b></span>` : ''}
     </div>
     <div class="info-status">${status}</div>`
 }
@@ -1417,12 +1479,14 @@ function buildShop() {
   els.shop.innerHTML = UNIT_ORDER.map((k) => {
     const t = UNIT_TYPES[k]
     const special = t.splash
-      ? `溅射${t.splash}`
-      : t.moveOrAttack
-        ? '移动/攻击二选一'
-        : t.canCapture
-          ? '占领'
-          : '强力'
+      ? `溅射${t.splash}·误伤友军`
+      : t.baseDamageMul
+        ? `对基地${Math.round(t.baseDamageMul * 100)}%`
+        : t.moveOrAttack
+          ? '移动/攻击二选一'
+          : t.canCapture
+            ? '占领'
+            : '强力'
     return `
       <button class="card" data-type="${k}" type="button">
         <span class="c-emoji">${t.emoji}</span>
@@ -1434,7 +1498,7 @@ function buildShop() {
 }
 
 function buildLegend() {
-  const order = ['.', 'H', 'F', 'M', 'B', 'W', '#']
+  const order = ['.', 'H', 'F', 'M', 'G', 'X', '#']
   els.legend.innerHTML = order
     .map((ch) => {
       const t = TERRAIN[ch]

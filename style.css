@@ -10,6 +10,11 @@ body,
   min-height: 100%;
 }
 
+/* 页面滚动条出现/消失时不再挤压布局，避免整页左右跳动 */
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   margin: 0;
   font-family: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
@@ -408,37 +413,42 @@ button {
   pointer-events: none;
 }
 
-.cell.water {
+.cell.wall {
   background:
-    radial-gradient(circle at 32% 28%, rgba(120, 195, 230, 0.22), transparent 62%),
-    linear-gradient(160deg, #1b3b4c, #0f2530);
-  box-shadow: inset 0 0 14px rgba(0, 0, 0, 0.5);
+    repeating-linear-gradient(0deg, #6e6a5d 0 5px, #575348 5px 10px),
+    #575348;
+  box-shadow:
+    inset 0 0 0 1px #33302a,
+    inset 0 4px 0 rgba(255, 255, 255, 0.07),
+    inset 0 -4px 10px rgba(0, 0, 0, 0.35);
   cursor: not-allowed;
 }
 
-.cell.water::after {
-  content: '≈';
+.cell.wall::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(90deg, transparent 0 24px, rgba(0, 0, 0, 0.3) 24px 26px);
+  opacity: 0.85;
+}
+
+.cell.gate {
+  background:
+    linear-gradient(90deg, rgba(110, 106, 93, 0.9), rgba(110, 106, 93, 0.9)) left / 18% 100% no-repeat,
+    linear-gradient(90deg, rgba(110, 106, 93, 0.9), rgba(110, 106, 93, 0.9)) right / 18% 100% no-repeat,
+    repeating-linear-gradient(90deg, #5d421f 0 3px, #463018 3px 6px);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+
+.cell.gate::after {
+  content: '🚪';
   position: absolute;
   inset: 0;
   display: grid;
   place-items: center;
-  font-size: calc(var(--cell) * 0.62);
-  color: rgba(150, 215, 245, 0.4);
-  animation: waterShimmer 3.6s ease-in-out infinite;
-}
-
-@keyframes waterShimmer {
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 0.85; }
-}
-
-.cell.bridge {
-  background:
-    linear-gradient(90deg, rgba(0, 0, 0, 0.4), transparent 20%, transparent 80%, rgba(0, 0, 0, 0.4)),
-    repeating-linear-gradient(0deg, #6d4c28 0 4px, #52371c 4px 8px);
-  box-shadow:
-    inset 0 0 0 1px rgba(0, 0, 0, 0.55),
-    inset 0 0 10px rgba(0, 0, 0, 0.25);
+  font-size: calc(var(--cell) * 0.5);
+  opacity: 0.85;
+  pointer-events: none;
 }
 
 .cell.base-red {
@@ -875,7 +885,10 @@ button {
 }
 
 .info-body {
-  min-height: 92px;
+  /* 固定高度：悬停不同单位/地形时面板不再忽高忽低 */
+  height: 168px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   font-size: 12px;
 }
 
@@ -953,9 +966,10 @@ button {
 }
 
 .log {
-  flex: 1;
+  /* 固定高度：战报增加时侧栏高度不再变化 */
+  height: 170px;
   overflow-y: auto;
-  max-height: 190px;
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -1106,7 +1120,7 @@ button {
   }
 
   .log {
-    max-height: 140px;
+    height: 140px;
   }
 }
 
