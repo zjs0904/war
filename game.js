@@ -6,7 +6,7 @@
  * 每局随机生成，两侧地形不镜像；单位击杀可晋升军衔
  * ============================================================ */
 
-const VERSION = 'v1.15'
+const VERSION = 'v1.17'
 
 // ───────── 常量 ─────────
 const COLS = 19
@@ -60,7 +60,7 @@ const key = (x, y) => `${x},${y}`
 const TERRAIN = {
   '.': { key: 'flat', name: '平地', icon: '▦', move: 1, effect: '无特殊效果' },
   H: { key: 'hill', name: '高地', icon: '⛰️', move: 1, effect: '射程 +2' },
-  F: { key: 'forest', name: '树林', icon: '🌲', move: 2, effect: '受到的伤害 -25%，阻挡远程攻击' },
+  F: { key: 'forest', name: '树林', icon: '🌲', move: 2, effect: '2 格以外的攻击伤害 -25%，阻挡远程攻击' },
   M: { key: 'swamp', name: '沼泽', icon: '🌿', move: 2, effect: '受到的伤害 +20%' },
   G: { key: 'gate', name: '城门', icon: '🚪', move: 1, effect: '穿过城墙的通道' },
   X: { key: 'wall', name: '城墙', icon: '🧱', move: Infinity, effect: '无法通行，阻挡远程攻击' },
@@ -116,18 +116,18 @@ function shuffle(arr) {
   return arr
 }
 
-function addCluster(grid, reserved, ch, count, minSize, maxSize) {
+function addCluster(grid, reserved, ch, count, minSize, maxSize, accept = null) {
   for (let i = 0; i < count; i++) {
     let x = -1
     let y = -1
     for (let t = 0; t < 40; t++) {
       const tx = randInt(COLS)
       const ty = randInt(ROWS)
-      if (!reserved.has(key(tx, ty)) && grid[ty][tx] === '.') {
-        x = tx
-        y = ty
-        break
-      }
+      if (reserved.has(key(tx, ty)) || grid[ty][tx] !== '.') continue
+      if (accept && !accept(tx, ty)) continue
+      x = tx
+      y = ty
+      break
     }
     if (x < 0) continue
 
@@ -203,6 +203,31 @@ function tryGenerateMap() {
   addCluster(grid, reserved, 'M', 2 + randInt(2), 1, 3)
   addCluster(grid, reserved, '#', 2 + randInt(3), 1, 2)
 
+  // 公平性：保证城墙左右两侧各至少有 1 个高地、1 片树林
+  const sideAt = (x, y) => (x < wallX[y] ? 'left' : x > wallX[y] ? 'right' : 'wall')
+  const hasTerrainOn = (ch, side) => {
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        if (grid[y][x] === ch && sideAt(x, y) === side) return true
+      }
+    }
+    return false
+  }
+  for (const side of ['left', 'right']) {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const needHill = !hasTerrainOn('H', side)
+      const needForest = !hasTerrainOn('F', side)
+      if (!needHill && !needForest) break
+      if (needHill) {
+        addCluster(grid, reserved, 'H', 1, 2, 3, (x, y) => sideAt(x, y) === side)
+      }
+      if (needForest) {
+        addCluster(grid, reserved, 'F', 1, 2, 4, (x, y) => sideAt(x, y) === side)
+      }
+    }
+  }
+  if (!['left', 'right'].every((s) => hasTerrainOn('H', s) && hasTerrainOn('F', s))) return null
+
   // 校验：双方基地、油田、生产槽必须连通
   const reach = floodFill(grid, BASE_POS.red)
   const need = [BASE_POS.blue, ...FIELD_POS, ...SPAWN_POS.red, ...SPAWN_POS.blue]
@@ -227,6 +252,13 @@ applyMap(FALLBACK_MAP)
 const isHill = (x, y) => TERRAIN_TILES.hill.has(key(x, y))
 const isForest = (x, y) => TERRAIN_TILES.forest.has(key(x, y))
 const isSwamp = (x, y) => TERRAIN_TILES.swamp.has(key(x, y))
+
+// 突击队员无视树林 / 沼泽的额外移动消耗
+function moveCostFor(unit, x, y) {
+  const cost = moveCostAt(x, y)
+  if (unit && unit.type === 'commando' && (isForest(x, y) || isSwamp(x, y))) return 1
+  return cost
+}
 
 // 视线阻挡：城墙 / 树林 / 岩石。手榴弹兵曲射，不受影响
 const BLOCKS_SIGHT = new Set(['wall', 'forest', 'rock'])
@@ -267,7 +299,7 @@ function hasLineOfSight(from, to) {
 
 const canSee = (u, target) => u.type === 'grenadier' || hasLineOfSight(u, target)
 
-// 军衔：击杀数达到门槛晋升，攻击与生命上限提升，并回满血
+// 军衔：击杀数达到门槛晋升，攻击与生命上限提升，并回复 50% 生命
 const RANKS = [
   { name: '新兵', kills: 0, atk: 1.0, hp: 1.0 },
   { name: '下士', kills: 2, atk: 1.15, hp: 1.25 },
@@ -296,9 +328,10 @@ const UNIT_TYPES = {
     hp: 100,
     atk: 200,
     range: 6,
+    minRange: 2,
     move: 3,
     baseDamageMul: 0.5,
-    desc: '射程 6，一击必杀步兵，对基地只造成 50% 伤害。移动后仍可攻击；站上高地射程可达 8。',
+    desc: '射程 6，一击必杀步兵，对基地只造成 50% 伤害。近身 1 格无法攻击（最小射程 2）；移动后仍可攻击，站上高地射程可达 8。',
   },
   engineer: {
     key: 'engineer',
@@ -328,12 +361,12 @@ const UNIT_TYPES = {
     key: 'commando',
     name: '突击队员',
     emoji: '🥷',
-    cost: 700,
+    cost: 550,
     hp: 240,
     atk: 160,
     range: 3,
     move: 5,
-    desc: '最昂贵的单位。240 生命、160 攻击、移动 5、射程 3，能单挑大部分单位。',
+    desc: '高机动的重装单位。240 生命、160 攻击、移动 5、射程 3，能贴脸解决狙击手等后排；在树林、沼泽中移动消耗为 1。',
   },
 }
 
@@ -605,6 +638,7 @@ function makeUnit(type, side, x, y) {
     baseMaxHp: type.hp,
     atk: type.atk,
     range: type.range,
+    minRange: type.minRange || 1,
     move: type.move,
     splash: type.splash || 0,
     canCapture: !!type.canCapture,
@@ -637,8 +671,8 @@ function baseDamageOf(u) {
 
 function damageTo(u, target) {
   let mult = 1
-  // 树林提供掩护，受到的伤害降低 25%
-  if (isForest(target.x, target.y)) mult *= 0.75
+  // 树林掩护只对 2 格以外的攻击有效，贴身近战不吃减伤
+  if (isForest(target.x, target.y) && dist(u, target) > 2) mult *= 0.75
   // 沼泽毫无遮掩，受到的伤害增加 20%
   if (isSwamp(target.x, target.y)) mult *= 1.2
   return Math.max(1, Math.round(damageOf(u) * mult))
@@ -655,8 +689,9 @@ function creditKill(u) {
     const r = RANKS[u.rank]
     u.atk = Math.round(u.baseAtk * r.atk)
     u.maxHp = Math.round(u.baseMaxHp * r.hp)
-    u.hp = u.maxHp
-    addLog(u.side, `${u.name} 晋升为 ${r.name}！攻击 ${u.atk}，生命回满 ${u.maxHp}`)
+    // 晋升只回复 50% 最大生命，避免残血单位靠捡人头瞬间满血滚雪球
+    u.hp = Math.min(u.maxHp, u.hp + Math.round(u.maxHp * 0.5))
+    addLog(u.side, `${u.name} 晋升为 ${r.name}！攻击 ${u.atk}，生命 ${u.hp}/${u.maxHp}`)
     floatText(u.x, u.y, `晋升 ${r.name}`, 'rank')
   }
 }
@@ -740,7 +775,8 @@ function isEnemyBaseTile(side, x, y) {
 function canAttack(u, target) {
   if (u.acted || u.atk <= 0) return false
   if (u.moveOrAttack && u.moved) return false
-  if (dist(u, target) > rangeOf(u)) return false
+  const d = dist(u, target)
+  if (d > rangeOf(u) || d < u.minRange) return false
   return canSee(u, target)
 }
 
@@ -847,7 +883,7 @@ function reachable(unit) {
       const k = key(nx, ny)
       if (blocked.has(k)) continue
 
-      const step = moveCostAt(nx, ny)
+      const step = moveCostFor(unit, nx, ny)
       if (!Number.isFinite(step)) continue
       const nc = cur.c + step
       if (nc > unit.move) continue
@@ -1002,7 +1038,8 @@ function targetsFrom(u, pos) {
   const canSeeFrom = (target) => u.type === 'grenadier' || hasLineOfSight(pos, target)
   for (const e of state.units) {
     if (e.side === u.side) continue
-    if (dist(pos, e) > range) continue
+    const d = dist(pos, e)
+    if (d > range || d < u.minRange) continue
     if (!canSeeFrom(e)) continue
     list.push({ kind: 'unit', unit: e })
   }
@@ -1306,7 +1343,7 @@ function unitInfoHtml(u) {
     <div class="info-grid">
       <span>生命 <b>${Math.max(0, u.hp)} / ${u.maxHp}</b></span>
       <span>当前伤害 <b>${u.atk ? damageOf(u) : '—'}</b></span>
-      <span>射程 <b>${u.range || '—'}${isHill(u.x, u.y) && u.range ? ' (+2)' : ''}</b></span>
+      <span>射程 <b>${u.range || '—'}${isHill(u.x, u.y) && u.range ? ' (+2)' : ''}${u.minRange > 1 ? `（最小 ${u.minRange}）` : ''}</b></span>
       <span>移动 <b>${u.move}</b></span>
       <span>坐标 <b>${u.x}, ${u.y}</b></span>
       <span>地形 <b>${terrain}</b></span>
