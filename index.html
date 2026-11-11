@@ -9,7 +9,7 @@
       href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚔️</text></svg>"
     />
     <title>小小大战争 · 双人对战</title>
-    <link rel="stylesheet" href="./style.css?v=1.17" />
+    <link rel="stylesheet" href="./style.css?v=1.20" />
   </head>
   <body>
     <div id="app">
@@ -36,6 +36,7 @@
           <div class="mode-tag" id="modeTag" hidden></div>
           <div class="turn-buttons">
             <button class="btn btn-end" id="endTurnBtn" type="button">结束回合</button>
+            <button class="btn btn-undo" id="undoBtn" type="button" title="撤销上一步（Ctrl+Z）" disabled>↶ 撤销</button>
             <button class="btn btn-icon" id="helpBtn" type="button" aria-label="玩法说明">?</button>
             <button class="btn btn-icon" id="menuBtn" type="button" aria-label="主菜单">☰</button>
           </div>
@@ -111,7 +112,8 @@
             <li><b>轮流行动</b>：红蓝双方交替，每回合开始获得 150 金币，每座油田额外 +50。</li>
             <li><b>购买单位</b>：点击右侧兵种卡片，单位出现在兵营前的生产槽，<b>当回合即可行动</b>。</li>
             <li><b>生产槽</b>：兵营前的 3 个 ＋ 格。己方单位在槽上站一回合会回满生命；敌方单位在槽上站一回合会被清除。</li>
-            <li><b>行动</b>：点击己方单位选中，绿格移动、红格攻击；每个单位每回合可以移动一次并攻击一次，之后点「结束回合」交给对方。</li>
+            <li><b>行动</b>：点击己方单位选中，绿格移动、红格攻击；每个单位每回合可以移动一次并攻击一次，<b>顺序不限</b>（可以先攻击再移动），之后点「结束回合」交给对方。</li>
+            <li><b>撤销</b>：点击顶部「撤销」或按 Ctrl+Z，可以回退当前回合内的上一步操作（移动、攻击、购买）；结束回合后清空。</li>
             <li><b>受伤变弱</b>：单位的伤害 = 基础攻击 × 当前生命比例，残血单位打不出全额伤害。</li>
             <li><b>射程</b>：步兵 3、狙击手 6、手榴弹兵 4、突击队员 3。</li>
             <li><b>狙击手</b>：造价 250，伤害 200、射程 6，可以秒杀步兵；对基地只造成 50% 伤害；<b>最小射程 2</b>（不能攻击相邻单位），生命与步兵相同（100）。</li>
@@ -152,6 +154,6 @@
       </div>
     </div>
 
-    <script src="./game.js?v=1.17"></script>
+    <script src="./game.js?v=1.20"></script>
   </body>
 </html>

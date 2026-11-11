@@ -6,7 +6,7 @@
  * 每局随机生成，两侧地形不镜像；单位击杀可晋升军衔
  * ============================================================ */
 
-const VERSION = 'v1.17'
+const VERSION = 'v1.20'
 
 // ───────── 常量 ─────────
 const COLS = 19
@@ -391,10 +391,32 @@ let state = null
 let unitSeq = 1
 let hintTimer = null
 let aiTimer = null
+// 当前回合内的操作快照，用于撤销
+let undoStack = []
 
 const dist = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y)
 const sideName = (s) => (s === 'red' ? '红方' : '蓝方')
 const enemyOf = (s) => (s === 'red' ? 'blue' : 'red')
+
+// ───────── 撤销 ─────────
+// 只记录当前回合内、人类玩家的操作；换回合时清空
+function pushUndo() {
+  if (!canHumanAct()) return
+  undoStack.push(JSON.parse(JSON.stringify(state)))
+  if (undoStack.length > 40) undoStack.shift()
+}
+
+function undo() {
+  if (!state || state.gameOver || !canHumanAct() || !undoStack.length) return
+  state = undoStack.pop()
+  state.aiThinking = false
+  state.hoverId = null
+  state.hoverCell = null
+  state.hoverType = null
+  render()
+  addLog('sys', '撤销上一步')
+  setHint('已撤销上一步')
+}
 
 // ───────── 初始化 ─────────
 function init(mode = 'pvp', level = 1) {
@@ -491,6 +513,7 @@ function startTurn(side, first = false) {
   state.turn = side
   state.selectedId = null
   state.aiThinking = false
+  undoStack.length = 0
 
   if (!first) {
     resolveCaptures(side)
@@ -614,6 +637,7 @@ function doBuy(typeKey, side) {
     return false
   }
 
+  pushUndo()
   state.money[side] -= type.cost
   const u = makeUnit(type, side, spot.x, spot.y)
   state.units.push(u)
@@ -729,8 +753,9 @@ function enemyBasePos(side) {
 function selectUnit(u) {
   if (!u || u.side !== state.turn || !canHumanAct()) return
   state.selectedId = u.id
-  if (u.acted) setHint('该单位本回合已经行动过了')
+  if (u.moved && u.acted) setHint('该单位本回合已经行动过了')
   else if (u.moved) setHint('已移动，还可以攻击')
+  else if (u.acted) setHint('已攻击，还可以移动')
   else setHint('绿色格移动，红色格攻击')
   render()
 }
@@ -740,7 +765,7 @@ function cellClicked(x, y) {
 
   const sel = getSelected()
 
-  if (sel && !sel.acted) {
+  if (sel) {
     if (!sel.moved && isMoveTile(sel, x, y)) {
       doMove(sel, x, y)
       return
@@ -774,7 +799,6 @@ function isEnemyBaseTile(side, x, y) {
 
 function canAttack(u, target) {
   if (u.acted || u.atk <= 0) return false
-  if (u.moveOrAttack && u.moved) return false
   const d = dist(u, target)
   if (d > rangeOf(u) || d < u.minRange) return false
   return canSee(u, target)
@@ -782,28 +806,31 @@ function canAttack(u, target) {
 
 function canAttackBase(u) {
   if (u.acted || u.atk <= 0) return false
-  if (u.moveOrAttack && u.moved) return false
   const b = enemyBasePos(u.side)
   if (dist(u, b) > rangeOf(u)) return false
   return canSee(u, b)
 }
 
 function doMove(u, x, y) {
+  pushUndo()
   u.x = x
   u.y = y
   u.moved = true
-  if (u.moveOrAttack) u.acted = true
   addLog(u.side, `${u.name} 移动到 (${x},${y})`)
-  if (u.acted && state.selectedId === u.id) state.selectedId = null
+  // 攻击过但还没移动的单位，移动完才算本回合行动结束
+  if (u.moved && u.acted && state.selectedId === u.id) state.selectedId = null
+  if (!u.acted && canHumanAct()) setHint('已移动，还可以攻击')
   render()
 }
 
 function doAttackUnit(u, target) {
+  pushUndo()
   const dmg = damageTo(u, target)
   target.hp -= dmg
   u.acted = true
-  u.moved = true
-  state.selectedId = null
+  // 还没移动的可以继续移动；已经移动过才算行动结束
+  if (u.moved && state.selectedId === u.id) state.selectedId = null
+  if (!u.moved && canHumanAct()) setHint('已攻击，还可以移动')
 
   floatText(target.x, target.y, `-${dmg}`, 'dmg')
   pulse(unitEls.get(target.id))
@@ -834,13 +861,14 @@ function doAttackUnit(u, target) {
 }
 
 function doAttackBase(u) {
+  pushUndo()
   const side = enemyOf(u.side)
   const b = BASE_POS[side]
   const dmg = baseDamageOf(u)
   state.baseHp[side] -= dmg
   u.acted = true
-  u.moved = true
-  state.selectedId = null
+  if (u.moved && state.selectedId === u.id) state.selectedId = null
+  if (!u.moved && canHumanAct()) setHint('已攻击，还可以移动')
 
   floatText(b.x, b.y, `-${dmg}`, 'dmg')
   pulse(baseEls[side])
@@ -940,7 +968,7 @@ function aiTurn() {
       render()
       return
     }
-    const u = state.units.find((x) => x.side === 'blue' && !x.acted)
+    const u = state.units.find((x) => x.side === 'blue' && !(x.moved && x.acted))
     if (!u) {
       state.aiThinking = false
       switchTurn()
@@ -1126,7 +1154,7 @@ function renderCells() {
   const moveSet = new Set()
   const attackSet = new Set()
 
-  if (sel && !sel.acted && !state.gameOver && canHumanAct()) {
+  if (sel && !state.gameOver && canHumanAct()) {
     if (!sel.moved) for (const p of reachable(sel)) moveSet.add(key(p.x, p.y))
     if (canAttackBase(sel)) attackSet.add(key(enemyBasePos(sel.side).x, enemyBasePos(sel.side).y))
     for (const u of state.units) {
@@ -1188,7 +1216,7 @@ function renderUnits() {
     el.className =
       'unit side-' +
       u.side +
-      (u.side === state.turn && u.acted ? ' spent' : '') +
+      (u.side === state.turn && u.moved && u.acted ? ' spent' : '') +
       (state.selectedId === u.id ? ' selected' : '')
 
     el.style.setProperty('--ux', u.x)
@@ -1252,6 +1280,7 @@ function renderHud() {
   els.bluePanel.classList.toggle('active', state.turn === 'blue' && !state.gameOver)
 
   els.endTurnBtn.disabled = state.gameOver || !canHumanAct()
+  els.undoBtn.disabled = state.gameOver || !canHumanAct() || undoStack.length === 0
 
   if (state.mode === 'ai') {
     els.modeTag.textContent = `${state.levelConfig.name} · ${state.levelConfig.sub}`
@@ -1323,7 +1352,14 @@ function terrainInfoHtml(x, y) {
 }
 
 function unitInfoHtml(u) {
-  const status = u.acted ? '本回合已行动' : u.moved ? '已移动，可继续攻击' : '可移动 + 攻击'
+  const status =
+    u.moved && u.acted
+      ? '本回合已行动'
+      : u.acted
+        ? '已攻击，还可以移动'
+        : u.moved
+          ? '已移动，还可以攻击'
+          : '可移动 + 攻击'
   const rank = RANKS[u.rank]
   const t = terrainAt(u.x, u.y)
   const terrain =
@@ -1460,6 +1496,7 @@ function bindEvents() {
   })
 
   els.endTurnBtn.addEventListener('click', endTurn)
+  els.undoBtn.addEventListener('click', undo)
   els.restartBtn.addEventListener('click', () => {
     els.overlay.hidden = true
     init(state.mode, state.level)
@@ -1501,6 +1538,12 @@ function bindEvents() {
   })
 
   window.addEventListener('keydown', (e) => {
+    if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+      e.preventDefault()
+      undo()
+      return
+    }
     if (e.key === ' ' || e.key === 'Enter') {
       if (state.gameOver) return
       if (e.target && /INPUT|TEXTAREA|BUTTON/.test(e.target.tagName)) return
@@ -1560,7 +1603,7 @@ function buildLevels() {
 // ───────── 启动 ─────────
 function boot() {
   const ids = [
-    'board', 'banner', 'hint', 'legend', 'turnSide', 'endTurnBtn',
+    'board', 'banner', 'hint', 'legend', 'turnSide', 'endTurnBtn', 'undoBtn',
     'redMoney', 'blueMoney', 'redBaseHp', 'blueBaseHp', 'redBaseFill', 'blueBaseFill',
     'redPanel', 'bluePanel', 'shop', 'shopMoney', 'infoBody', 'log',
     'overlay', 'overlayIcon', 'overlayTitle', 'overlaySub', 'restartBtn',
