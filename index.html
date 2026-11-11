@@ -9,7 +9,7 @@
       href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚔️</text></svg>"
     />
     <title>小小大战争 · 双人对战</title>
-    <link rel="stylesheet" href="./style.css?v=1.20" />
+    <link rel="stylesheet" href="./style.css?v=1.21" />
   </head>
   <body>
     <div id="app">
@@ -109,6 +109,9 @@
           <div class="overlay-icon">📖</div>
           <h1>玩法说明</h1>
           <ul class="help-list">
+            <li><b>海岛地图</b>：在主菜单选择海岛后开始双人或关卡对战。双方主岛各有造船厂，中央岛有中立补给站。</li>
+            <li><b>舰船与登陆</b>：运输船搭载 2 人，选中未行动士兵，点击相邻己方运输船上船；选中船点击相邻金色陆地卸载。登陆士兵下回合行动，沉船会损失乘员。高射炮艇打士兵和舰船，鱼雷艇只打舰船。</li>
+            <li><b>补给站</b>：任意士兵驻守至己方下回合占领，每回合 +75 金币，并为 2 格内友军回复 30 生命。礁石减慢舰船，但提供 20% 减伤；造船厂每回合修复己方舰船 40 生命。</li>
             <li><b>轮流行动</b>：红蓝双方交替，每回合开始获得 150 金币，每座油田额外 +50。</li>
             <li><b>购买单位</b>：点击右侧兵种卡片，单位出现在兵营前的生产槽，<b>当回合即可行动</b>。</li>
             <li><b>生产槽</b>：兵营前的 3 个 ＋ 格。己方单位在槽上站一回合会回满生命；敌方单位在槽上站一回合会被清除。</li>
@@ -137,6 +140,10 @@
           <h1>小小大战争</h1>
           <p class="menu-sub">红蓝两军 · 回合制对决</p>
 
+          <label class="map-picker" for="mapSelect">选择战场
+            <select id="mapSelect"><option value="land">🧱 陆地 · 随机城墙</option><option value="island">🌊 海岛 · 舰队与登陆</option></select>
+          </label>
+          <p class="map-note">选择地图后开始新对局；当前对局可通过下方按钮返回。</p>
           <button class="menu-btn" id="pvpBtn" type="button">
             <span class="mb-icon">👥</span>
             <span class="mb-text">
@@ -154,6 +161,6 @@
       </div>
     </div>
 
-    <script src="./game.js?v=1.20"></script>
+    <script src="./game.js?v=1.21"></script>
   </body>
 </html>

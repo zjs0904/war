@@ -6,7 +6,7 @@
  * 每局随机生成，两侧地形不镜像；单位击杀可晋升军衔
  * ============================================================ */
 
-const VERSION = 'v1.20'
+const VERSION = 'v1.21'
 
 // ───────── 常量 ─────────
 const COLS = 19
@@ -57,7 +57,17 @@ const FIELD_POS = [
 const key = (x, y) => `${x},${y}`
 
 // 地形表：move 为移动消耗，Infinity 表示不可通行
+const DOCK_POS = { red: [{x: 4, y: 4}, {x: 4, y: 5}, {x: 4, y: 6}], blue: [{x: 14, y: 4}, {x: 14, y: 5}, {x: 14, y: 6}] }
+const SUPPLY_POS = [{x: 9, y: 5, owner: null}]
+const isShip = (u) => !!UNIT_TYPES[u.type]?.naval
+const isSea = (x, y) => ['water', 'reef', 'dock'].includes(terrainAt(x, y).key)
+
 const TERRAIN = {
+  W: { key: 'water', name: '深海', icon: '🌊', move: Infinity, effect: '仅舰船通行；士兵需要搭乘运输船' },
+  R: { key: 'reef', name: '礁石浅海', icon: '🪸', move: Infinity, effect: '舰船移动消耗 2，受到伤害减少 20%' },
+  B: { key: 'beach', name: '沙滩', icon: '🏖️', move: 1, effect: '可登陆的岛岸；留意敌方炮艇' },
+  D: { key: 'dock', name: '造船厂', icon: '⚓', move: Infinity, effect: '舰船生产槽，己方舰船回合开始时修复 40 生命' },
+
   '.': { key: 'flat', name: '平地', icon: '▦', move: 1, effect: '无特殊效果' },
   H: { key: 'hill', name: '高地', icon: '⛰️', move: 1, effect: '射程 +2' },
   F: { key: 'forest', name: '树林', icon: '🌲', move: 2, effect: '2 格以外的攻击伤害 -25%，阻挡远程攻击' },
@@ -106,6 +116,18 @@ const FALLBACK_MAP = [
   '...#.....X.....#...',
   '.........X.........',
 ]
+
+// 对称的主岛与中央群岛，海峡提供多条包抄航线。
+function generateIslandMap() {
+  const grid = Array.from({length: ROWS}, () => Array(COLS).fill('W'))
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+    if (x <= 3 || x >= 15) grid[y][x] = (x === 3 || x === 15) ? 'B' : '.'
+    if (x >= 8 && x <= 10 && y >= 3 && y <= 7) grid[y][x] = 'B'
+  }
+  for (const [x,y,ch] of [[1,2,'H'],[17,2,'H'],[1,8,'H'],[17,8,'H'],[2,1,'F'],[16,1,'F'],[2,9,'F'],[16,9,'F'],[9,3,'H'],[9,7,'H'],[9,4,'F'],[9,6,'F'],[6,2,'B'],[12,8,'B'],[6,1,'H'],[12,9,'H'],[7,4,'R'],[11,6,'R'],[6,7,'R'],[12,3,'R']]) grid[y][x] = ch
+  for (const points of Object.values(DOCK_POS)) for (const p of points) grid[p.y][p.x] = 'D'
+  applyMap(grid.map(row => row.join('')))
+}
 
 // ───────── 随机地图 ─────────
 function shuffle(arr) {
@@ -255,6 +277,7 @@ const isSwamp = (x, y) => TERRAIN_TILES.swamp.has(key(x, y))
 
 // 突击队员无视树林 / 沼泽的额外移动消耗
 function moveCostFor(unit, x, y) {
+  if (isShip(unit)) return isSea(x, y) ? (terrainAt(x, y).key === 'reef' ? 2 : 1) : Infinity
   const cost = moveCostAt(x, y)
   if (unit && unit.type === 'commando' && (isForest(x, y) || isSwamp(x, y))) return 1
   return cost
@@ -370,6 +393,12 @@ const UNIT_TYPES = {
   },
 }
 
+Object.assign(UNIT_TYPES, {
+  transport: {key:'transport', name:'运输船', emoji:'⛴️', cost:150, hp:220, atk:0, range:0, move:5, naval:true, capacity:2, desc:'可搭载 2 名士兵。选中岸上士兵后点击相邻运输船上船；选中运输船后点击相邻空陆地，依次卸载。装卸消耗士兵本回合行动，舰船沉没时乘员一同损失。'},
+  gunboat: {key:'gunboat', name:'高射炮艇', emoji:'🚢', cost:300, hp:250, atk:85, range:4, move:4, naval:true, desc:'可攻击岸上士兵、舰船和基地。对舰船伤害为 70%；受树林、岩石遮挡，无法驶上陆地。'},
+  torpedo: {key:'torpedo', name:'鱼雷艇', emoji:'🚤', cost:250, hp:150, atk:180, range:3, move:6, naval:true, desc:'高速猎舰单位，只能攻击舰船，无法攻击士兵或基地；鱼雷不能穿过岛屿。'}
+})
+const NAVAL_ORDER = ['transport', 'gunboat', 'torpedo']
 const UNIT_ORDER = ['infantry', 'sniper', 'engineer', 'grenadier', 'commando']
 
 const LEVELS = [
@@ -418,14 +447,120 @@ function undo() {
   setHint('已撤销上一步')
 }
 
+// ───────── 海岛运输 / 补给 ─────────
+function canBoard(u, ship) {
+  return !isShip(u) && !u.carrierId && !u.moved && !u.acted && ship.type === 'transport' &&
+    ship.side === u.side && ship.cargo.length < 2 && dist(u, ship) === 1
+}
+function boardUnit(u, ship) {
+  if (!canBoard(u, ship)) return false
+  pushUndo()
+  u.carrierId = ship.id
+  u.x = ship.x; u.y = ship.y
+  u.moved = true; u.acted = true
+  ship.cargo.push(u.id)
+  state.selectedId = ship.id
+  addLog(u.side, `${u.name} 登上运输船（${ship.cargo.length}/2）`)
+  setHint('已上船；选中运输船移动，点击相邻金色陆地卸载')
+  render()
+  return true
+}
+function canUnload(ship, x, y) {
+  return ship.type === 'transport' && ship.cargo.length > 0 && !ship.acted && inBounds(x,y) &&
+    dist(ship, {x,y}) === 1 && Number.isFinite(moveCostAt(x,y)) && !unitAt(x,y) && !isBaseTile(x,y)
+}
+function unloadUnit(ship, x, y) {
+  if (!canUnload(ship,x,y)) return false
+  pushUndo()
+  const passengerId = ship.cargo.shift()
+  const u = state.units.find(p => p.id === passengerId)
+  u.carrierId = null; u.x = x; u.y = y; u.moved = true; u.acted = true
+  // 同一回合可依次卸下两名乘员，登陆后下回合才能行动。
+  addLog(ship.side, `${u.name} 登陆 (${x},${y})`)
+  setHint('已登陆，士兵下回合可行动；可继续卸载另一名乘员')
+  render()
+  return true
+}
+function torpedoSight(from, to) {
+  if (!hasLineOfSight(from, to)) return false
+  const steps = Math.max(Math.abs(to.x-from.x), Math.abs(to.y-from.y)) * 4
+  for (let i = 1; i < steps; i++) {
+    const x = Math.round(from.x + (to.x-from.x)*i/steps)
+    const y = Math.round(from.y + (to.y-from.y)*i/steps)
+    if (!isSea(x,y)) return false
+  }
+  return true
+}
+function resolveSupplies(side) {
+  for (const p of state.supplies) {
+    const occupant = unitAt(p.x,p.y)
+    if (occupant && occupant.side === side && !isShip(occupant) && p.owner !== side) {
+      p.owner = side
+      addLog(side, '占领中央补给站：每回合 +75 金币，附近友军回复 30 生命')
+    }
+    if (p.owner === side) for (const u of state.units) {
+      if (u.side === side && !u.carrierId && dist(u,p) <= 2) u.hp = Math.min(u.maxHp,u.hp+30)
+    }
+  }
+  if (state.mapType === 'island') for (const p of DOCK_POS[side]) {
+    const u = unitAt(p.x,p.y)
+    if (u && u.side === side && isShip(u)) u.hp = Math.min(u.maxHp,u.hp+40)
+  }
+}
+function aiNavalAction(u) {
+  if (u.type === 'transport') {
+    if (u.cargo.length) {
+      let land = DIRS.map(([dx,dy]) => ({x:u.x+dx,y:u.y+dy})).filter(p => canUnload(u,p.x,p.y))
+      // 优先中央岛，其次敌方主岛。
+      if (!land.length || u.x < 12) {
+        const goal = u.x > 10 ? {x:11,y:5} : {x:14,y:5}
+        if (!u.moved) {
+          const options = reachable(u).sort((a,b) => dist(a,goal)-dist(b,goal))
+          if (options.length) doMove(u,options[0].x,options[0].y)
+        }
+        land = DIRS.map(([dx,dy]) => ({x:u.x+dx,y:u.y+dy})).filter(p => canUnload(u,p.x,p.y))
+      }
+      for (const p of land) if (canUnload(u,p.x,p.y)) unloadUnit(u,p.x,p.y)
+    } else {
+      const soldiers = state.units.filter(p => p.side === u.side && !isShip(p) && !p.carrierId && p.x >= 15)
+      const goal = soldiers.length ? soldiers.sort((a,b)=>dist(a,u)-dist(b,u))[0] : {x:14,y:5}
+      if (!u.moved) {
+        const options = reachable(u).sort((a,b)=>dist(a,goal)-dist(b,goal))
+        if (options.length) doMove(u,options[0].x,options[0].y)
+      }
+      for (const soldier of soldiers) if (canBoard(soldier,u)) boardUnit(soldier,u)
+    }
+    u.moved = true; u.acted = true
+    return true
+  }
+  if (!isShip(u) && u.x >= 15) {
+    const ships = state.units.filter(p => p.side === u.side && p.type === 'transport' && p.cargo.length < 2)
+    for (const ship of ships) if (canBoard(u,ship)) { boardUnit(u,ship); return true }
+    if (ships.length && !u.moved) {
+      const options = reachable(u).sort((a,b)=>Math.min(...ships.map(p=>dist(a,p)))-Math.min(...ships.map(p=>dist(b,p))))
+      if (options.length) doMove(u,options[0].x,options[0].y)
+      for (const ship of ships) {
+        // 移到岸边后等待下一回合上船。
+        if (dist(u,ship) === 1) break
+      }
+      u.moved = true; u.acted = true
+      return true
+    }
+  }
+  return false
+}
+
 // ───────── 初始化 ─────────
-function init(mode = 'pvp', level = 1) {
+function init(mode = 'pvp', level = 1, mapType = state?.mapType || 'land') {
   clearTimeout(aiTimer)
-  generateMap()
+  if (mapType === 'island') generateIslandMap()
+  else generateMap()
   const lv = LEVELS.find((l) => l.id === level) || LEVELS[0]
 
   state = {
     mode,
+    mapType,
+    supplies: mapType === 'island' ? SUPPLY_POS.map(p => ({...p})) : [],
     level: lv.id,
     levelConfig: lv,
     turn: 'red',
@@ -433,7 +568,7 @@ function init(mode = 'pvp', level = 1) {
     baseHp: { red: BASE_MAX_HP, blue: BASE_MAX_HP },
     baseProgress: { red: 0, blue: 0 },
     units: [],
-    fields: FIELD_POS.map((f) => ({ x: f.x, y: f.y, owner: f.owner })),
+    fields: (mapType === 'island' ? FIELD_POS.slice(0, 4).map(f => ({...f, x: f.owner === 'red' ? 2 : 16})) : FIELD_POS).map((f) => ({ x: f.x, y: f.y, owner: f.owner })),
     selectedId: null,
     hoverId: null,
     hoverCell: null,
@@ -452,6 +587,10 @@ function init(mode = 'pvp', level = 1) {
   buildBoard()
   buildBases()
   buildSpawns()
+  buildShop()
+  buildLegend()
+  els.mapSelect.value = mapType
+  els.board.classList.toggle('island-board', mapType === 'island')
 
   els.overlay.hidden = true
   els.helpOverlay.hidden = true
@@ -522,10 +661,11 @@ function startTurn(side, first = false) {
       return
     }
     resolveSpawnSlots(side)
+    resolveSupplies(side)
   }
 
   const fieldCount = state.fields.filter((f) => f.owner === side).length
-  let income = BASE_INCOME + fieldCount * FIELD_INCOME
+  let income = BASE_INCOME + fieldCount * FIELD_INCOME + state.supplies.filter(p => p.owner === side).length * 75
   if (state.mode === 'ai' && side === 'blue') income += state.levelConfig.aiIncome
   state.money[side] += income
   addLog('sys', `${sideName(side)}回合开始，收入 +${income}（油田 ${fieldCount} 座）`)
@@ -566,7 +706,7 @@ function resolveCaptures(side) {
   for (const f of state.fields) {
     if (f.owner === side) continue
     const eng = state.units.find(
-      (u) => u.side === side && u.type === 'engineer' && u.x === f.x && u.y === f.y
+      (u) => u.side === side && u.type === 'engineer' && !u.carrierId && u.x === f.x && u.y === f.y
     )
     if (eng) {
       f.owner = side
@@ -577,7 +717,7 @@ function resolveCaptures(side) {
 
   const eb = enemyBasePos(side)
   const adjacent = state.units.some(
-    (u) => u.side === side && u.type === 'engineer' && dist(u, eb) <= 1
+    (u) => u.side === side && u.type === 'engineer' && !u.carrierId && dist(u, eb) <= 1
   )
   if (adjacent) {
     state.baseProgress[side] += 1
@@ -609,9 +749,10 @@ function resolveSpawnSlots(side) {
 }
 
 // ───────── 购买 ─────────
-function findSpawn(side) {
-  for (const p of SPAWN_POS[side]) {
-    if (!Number.isFinite(moveCostAt(p.x, p.y))) continue
+function findSpawn(side, naval = false) {
+  if (naval && state.mapType !== 'island') return null
+  for (const p of (naval ? DOCK_POS[side] : SPAWN_POS[side])) {
+    if (!naval && !Number.isFinite(moveCostAt(p.x, p.y))) continue
     if (unitAt(p.x, p.y)) continue
     if (isBaseTile(p.x, p.y)) continue
     return p
@@ -631,7 +772,7 @@ function doBuy(typeKey, side) {
     if (side === 'red') setHint(`金币不足，${type.name}需要 ${type.cost}`, true)
     return false
   }
-  const spot = findSpawn(side)
+  const spot = findSpawn(side, type.naval)
   if (!spot) {
     if (side === 'red') setHint('生产槽已满，先让单位走开', true)
     return false
@@ -667,6 +808,8 @@ function makeUnit(type, side, x, y) {
     splash: type.splash || 0,
     canCapture: !!type.canCapture,
     moveOrAttack: !!type.moveOrAttack,
+    cargo: [],
+    carrierId: null,
     baseDamageMul: type.baseDamageMul ?? 1,
     moved: false,
     acted: false,
@@ -699,6 +842,8 @@ function damageTo(u, target) {
   if (isForest(target.x, target.y) && dist(u, target) > 2) mult *= 0.75
   // 沼泽毫无遮掩，受到的伤害增加 20%
   if (isSwamp(target.x, target.y)) mult *= 1.2
+  if (isShip(target) && terrainAt(target.x, target.y).key === 'reef') mult *= 0.8
+  if (u.type === 'gunboat' && isShip(target)) mult *= 0.7
   return Math.max(1, Math.round(damageOf(u) * mult))
 }
 
@@ -732,7 +877,7 @@ function getSelected() {
 }
 
 function unitAt(x, y) {
-  return state.units.find((u) => u.x === x && u.y === y) || null
+  return state.units.find((u) => !u.carrierId && u.x === x && u.y === y) || null
 }
 
 function fieldAt(x, y) {
@@ -753,7 +898,8 @@ function enemyBasePos(side) {
 function selectUnit(u) {
   if (!u || u.side !== state.turn || !canHumanAct()) return
   state.selectedId = u.id
-  if (u.moved && u.acted) setHint('该单位本回合已经行动过了')
+  if (u.type === 'transport') setHint('点击绿色海域航行；点击相邻金色陆地卸载乘员')
+  else if (u.moved && u.acted) setHint('该单位本回合已经行动过了')
   else if (u.moved) setHint('已移动，还可以攻击')
   else if (u.acted) setHint('已攻击，还可以移动')
   else setHint('绿色格移动，红色格攻击')
@@ -766,6 +912,9 @@ function cellClicked(x, y) {
   const sel = getSelected()
 
   if (sel) {
+    const vessel = unitAt(x, y)
+    if (vessel && canBoard(sel, vessel)) { boardUnit(sel, vessel); return }
+    if (canUnload(sel, x, y)) { unloadUnit(sel, x, y); return }
     if (!sel.moved && isMoveTile(sel, x, y)) {
       doMove(sel, x, y)
       return
@@ -798,14 +947,17 @@ function isEnemyBaseTile(side, x, y) {
 }
 
 function canAttack(u, target) {
-  if (u.acted || u.atk <= 0) return false
+  if (u.carrierId || u.acted || u.atk <= 0) return false
+  if (target.carrierId || (u.type === 'torpedo' && !isShip(target))) return false
+  if (u.type === 'torpedo' && !torpedoSight(u, target)) return false
   const d = dist(u, target)
   if (d > rangeOf(u) || d < u.minRange) return false
   return canSee(u, target)
 }
 
 function canAttackBase(u) {
-  if (u.acted || u.atk <= 0) return false
+  if (u.type === 'torpedo') return false
+  if (u.carrierId || u.acted || u.atk <= 0) return false
   const b = enemyBasePos(u.side)
   if (dist(u, b) > rangeOf(u)) return false
   return canSee(u, b)
@@ -816,6 +968,7 @@ function doMove(u, x, y) {
   u.x = x
   u.y = y
   u.moved = true
+  for (const id of u.cargo) { const passenger = state.units.find(p => p.id === id); if (passenger) { passenger.x = x; passenger.y = y } }
   addLog(u.side, `${u.name} 移动到 (${x},${y})`)
   // 攻击过但还没移动的单位，移动完才算本回合行动结束
   if (u.moved && u.acted && state.selectedId === u.id) state.selectedId = null
@@ -842,7 +995,7 @@ function doAttackUnit(u, target) {
   if (u.splash) {
     const sp = splashOf(u)
     for (const other of state.units) {
-      if (other.id === target.id) continue
+      if (other.carrierId || other.id === target.id) continue
       if (other.id === u.id) continue // 自己不会被自己的手榴弹炸到
       if (dist(other, target) !== 1) continue
       other.hp -= sp
@@ -884,13 +1037,15 @@ function cleanupDead() {
   for (const d of dead) {
     addLog(d.side, `${d.name} 被消灭`, true)
   }
-  state.units = state.units.filter((u) => u.hp > 0)
+  const sunk = new Set(dead.map(u => u.id))
+  state.units = state.units.filter((u) => u.hp > 0 && !sunk.has(u.carrierId))
 }
 
 // ───────── 移动范围（树林 / 沼泽消耗 2 点移动力） ─────────
 function reachable(unit) {
+  if (unit.carrierId) return []
   const blocked = new Set()
-  for (const u of state.units) if (u.id !== unit.id) blocked.add(key(u.x, u.y))
+  for (const u of state.units) if (!u.carrierId && u.id !== unit.id) blocked.add(key(u.x, u.y))
   blocked.add(key(BASE_POS.red.x, BASE_POS.red.y))
   blocked.add(key(BASE_POS.blue.x, BASE_POS.blue.y))
 
@@ -968,7 +1123,7 @@ function aiTurn() {
       render()
       return
     }
-    const u = state.units.find((x) => x.side === 'blue' && !(x.moved && x.acted))
+    const u = state.units.find((x) => x.side === 'blue' && !x.carrierId && !(x.moved && x.acted))
     if (!u) {
       state.aiThinking = false
       switchTurn()
@@ -988,7 +1143,7 @@ function aiTurn() {
 
 function aiBuy() {
   for (let i = 0; i < 4; i++) {
-    if (!findSpawn('blue')) break
+    if (!findSpawn('blue') && !(state.mapType === 'island' && findSpawn('blue', true))) break
     const t = choosePurchase()
     if (!t) break
     if (!doBuy(t, 'blue')) break
@@ -997,6 +1152,13 @@ function aiBuy() {
 
 function choosePurchase() {
   const money = state.money.blue
+  if (state.mapType === 'island') {
+    const fleet = state.units.filter(u => u.side === 'blue' && isShip(u))
+    for (const type of ['transport', 'torpedo', 'gunboat']) {
+      if (!fleet.some(u => u.type === type) && money >= UNIT_TYPES[type].cost && findSpawn('blue', true)) return type
+    }
+  }
+  if (!findSpawn('blue')) return null
   const my = state.units.filter((u) => u.side === 'blue')
   const enemy = state.units.filter((u) => u.side === 'red')
   const hasEng = my.some((u) => u.type === 'engineer')
@@ -1013,6 +1175,7 @@ function choosePurchase() {
 }
 
 function aiActUnit(u) {
+  if (state.mapType === 'island' && aiNavalAction(u)) return
   if (u.type === 'engineer' && state.baseProgress.blue > 0 && dist(u, enemyBasePos('blue')) <= 1) {
     u.acted = true
     u.moved = true
@@ -1027,7 +1190,7 @@ function aiActUnit(u) {
 
   for (const pos of options) {
     const moved = pos.x !== u.x || pos.y !== u.y
-    const canShoot = u.atk > 0 && !(u.moveOrAttack && moved)
+    const canShoot = !u.acted && u.atk > 0 && !(u.moveOrAttack && moved)
     const targets = canShoot ? targetsFrom(u, pos) : []
     let score
     let target = null
@@ -1065,14 +1228,14 @@ function targetsFrom(u, pos) {
   const range = rangeAt(u, pos)
   const canSeeFrom = (target) => u.type === 'grenadier' || hasLineOfSight(pos, target)
   for (const e of state.units) {
-    if (e.side === u.side) continue
+    if (e.side === u.side || e.carrierId || (u.type === 'torpedo' && (!isShip(e) || !torpedoSight(pos, e)))) continue
     const d = dist(pos, e)
     if (d > range || d < u.minRange) continue
     if (!canSeeFrom(e)) continue
     list.push({ kind: 'unit', unit: e })
   }
   const eb = enemyBasePos(u.side)
-  if (dist(pos, eb) <= range && canSeeFrom(eb)) list.push({ kind: 'base' })
+  if (u.type !== 'torpedo' && dist(pos, eb) <= range && canSeeFrom(eb)) list.push({ kind: 'base' })
   return list
 }
 
@@ -1116,13 +1279,13 @@ function targetScore(u, t) {
 
 function objectiveDistance(u, pos) {
   if (u.type === 'engineer') {
-    const targets = state.fields.filter((f) => f.owner !== 'blue').map((f) => dist(pos, f))
+    const targets = [...state.supplies, ...state.fields].filter((f) => f.owner !== 'blue').map((f) => dist(pos, f))
     if (targets.length) return Math.min(...targets)
     return dist(pos, enemyBasePos('blue'))
   }
   let nearest = Infinity
   for (const e of state.units) {
-    if (e.side === u.side) continue
+    if (e.side === u.side || e.carrierId || (u.type === 'torpedo' && !isShip(e))) continue
     nearest = Math.min(nearest, dist(pos, e))
   }
   const db = dist(pos, enemyBasePos('blue'))
@@ -1132,7 +1295,7 @@ function objectiveDistance(u, pos) {
 function dangerAt(side, pos) {
   let danger = 0
   for (const e of state.units) {
-    if (e.side === side) continue
+    if (e.side === side || e.carrierId) continue
     if (dist(e, pos) <= rangeOf(e) + e.move) danger += damageOf(e) * 0.4
   }
   return danger
@@ -1158,7 +1321,7 @@ function renderCells() {
     if (!sel.moved) for (const p of reachable(sel)) moveSet.add(key(p.x, p.y))
     if (canAttackBase(sel)) attackSet.add(key(enemyBasePos(sel.side).x, enemyBasePos(sel.side).y))
     for (const u of state.units) {
-      if (u.side !== sel.side && canAttack(sel, u)) attackSet.add(key(u.x, u.y))
+      if (!u.carrierId && u.side !== sel.side && canAttack(sel, u)) attackSet.add(key(u.x, u.y))
     }
   }
 
@@ -1179,6 +1342,12 @@ function renderCells() {
         if (field.owner) cls += ` well-${field.owner}`
       }
 
+      if (state.supplies.some(p => p.x === x && p.y === y)) {
+        const supply = state.supplies.find(p => p.x === x && p.y === y)
+        cls += ' supply' + (supply.owner ? ' well-' + supply.owner : '')
+      }
+      if (state.mapType === 'island' && terrain.key === 'dock') cls += x < 9 ? ' dock-red' : ' dock-blue'
+      if (sel && (canUnload(sel, x, y) || (unitAt(x, y) && canBoard(sel, unitAt(x, y))))) cls += ' embark'
       if (moveSet.has(k)) cls += ' move'
       if (attackSet.has(k)) cls += ' attack'
       if (sel && sel.x === x && sel.y === y) cls += ' selected'
@@ -1192,6 +1361,7 @@ function renderUnits() {
   const alive = new Set()
 
   for (const u of state.units) {
+    if (u.carrierId) continue
     alive.add(u.id)
     let el = unitEls.get(u.id)
     if (!el) {
@@ -1222,7 +1392,7 @@ function renderUnits() {
     el.style.setProperty('--ux', u.x)
     el.style.setProperty('--uy', u.y)
     el.querySelector('.u-emoji').textContent = u.emoji
-    el.querySelector('.u-rank').textContent = u.rank > 0 ? '★'.repeat(u.rank) : ''
+    el.querySelector('.u-rank').textContent = u.cargo.length ? `👥 ${u.cargo.length}/2` : u.rank > 0 ? '★'.repeat(u.rank) : ''
 
     const pct = Math.max(0, Math.min(100, (u.hp / u.maxHp) * 100))
     const fill = el.querySelector('.u-hpbar i')
@@ -1258,9 +1428,9 @@ function renderHud() {
   els.redBaseFill.style.width = Math.max(0, (state.baseHp.red / BASE_MAX_HP) * 100) + '%'
   els.blueBaseFill.style.width = Math.max(0, (state.baseHp.blue / BASE_MAX_HP) * 100) + '%'
 
-  const redIncome = BASE_INCOME + state.fields.filter((f) => f.owner === 'red').length * FIELD_INCOME
+  const redIncome = state.supplies.filter(p => p.owner === 'red').length * 75 + BASE_INCOME + state.fields.filter((f) => f.owner === 'red').length * FIELD_INCOME
   const blueIncome =
-    BASE_INCOME +
+    state.supplies.filter(p => p.owner === 'blue').length * 75 + BASE_INCOME +
     state.fields.filter((f) => f.owner === 'blue').length * FIELD_INCOME +
     (state.mode === 'ai' ? state.levelConfig.aiIncome : 0)
   els.redIncome.textContent = `+${redIncome}/回合`
@@ -1283,10 +1453,11 @@ function renderHud() {
   els.undoBtn.disabled = state.gameOver || !canHumanAct() || undoStack.length === 0
 
   if (state.mode === 'ai') {
-    els.modeTag.textContent = `${state.levelConfig.name} · ${state.levelConfig.sub}`
+    els.modeTag.textContent = `${state.mapType === 'island' ? '海岛' : '陆地'} · ${state.levelConfig.name} · ${state.levelConfig.sub}`
     els.modeTag.hidden = false
   } else {
-    els.modeTag.hidden = true
+    els.modeTag.textContent = state.mapType === 'island' ? '海岛争夺战' : '陆地战场'
+    els.modeTag.hidden = false
   }
 }
 
@@ -1296,7 +1467,7 @@ function renderShop() {
   for (const card of els.shop.querySelectorAll('.card')) {
     const type = UNIT_TYPES[card.dataset.type]
     const affordable = state.money[state.turn] >= type.cost
-    card.disabled = state.gameOver || !interactive || !affordable || !canSpawn
+    card.disabled = state.gameOver || !interactive || !affordable || !(type.naval ? findSpawn(state.turn, true) : canSpawn)
   }
 }
 
@@ -1337,6 +1508,8 @@ function renderInfo() {
 }
 
 function terrainInfoHtml(x, y) {
+  const supply = state.supplies.find(p => p.x === x && p.y === y)
+  if (supply) return `<div class="info-head">📦 中立补给站</div><div class="info-desc">${supply.owner ? sideName(supply.owner) + '控制' : '尚未占领'}。任意士兵驻守至己方下回合即占领；每回合 +75 金币，并为距离 2 格内友军回复 30 生命。</div>`
   const t = terrainAt(x, y)
   const cost = Number.isFinite(t.move) ? t.move : '—'
   return `
@@ -1352,6 +1525,7 @@ function terrainInfoHtml(x, y) {
 }
 
 function unitInfoHtml(u) {
+  const cargoInfo = u.type === 'transport' ? `<div class="info-desc">搭载 ${u.cargo.length}/2：${u.cargo.map(id => state.units.find(p => p.id === id)?.name).join('、') || '空载'}。点击相邻金色陆地卸载。</div>` : ''
   const status =
     u.moved && u.acted
       ? '本回合已行动'
@@ -1385,7 +1559,7 @@ function unitInfoHtml(u) {
       <span>地形 <b>${terrain}</b></span>
       ${u.baseDamageMul < 1 ? `<span>对基地 <b>${Math.round(u.baseDamageMul * 100)}%</b></span>` : ''}
     </div>
-    <div class="info-status">${status}</div>`
+    <div class="info-status">${status}${cargoInfo}</div>`
 }
 
 function renderLog() {
@@ -1523,14 +1697,14 @@ function bindEvents() {
 
   els.pvpBtn.addEventListener('click', () => {
     els.menuOverlay.hidden = true
-    init('pvp', 1)
+    init('pvp', 1, els.mapSelect.value)
   })
 
   els.levelGrid.addEventListener('click', (e) => {
     const card = e.target.closest('.level-card')
     if (!card) return
     els.menuOverlay.hidden = true
-    init('ai', Number(card.dataset.level))
+    init('ai', Number(card.dataset.level), els.mapSelect.value)
   })
 
   els.menuHelpBtn.addEventListener('click', () => {
@@ -1555,7 +1729,7 @@ function bindEvents() {
 
 // ───────── 商店 / 关卡卡片 ─────────
 function buildShop() {
-  els.shop.innerHTML = UNIT_ORDER.map((k) => {
+  els.shop.innerHTML = [...UNIT_ORDER, ...(state?.mapType === 'island' ? NAVAL_ORDER : [])].map((k) => {
     const t = UNIT_TYPES[k]
     const special = t.splash
       ? `溅射${t.splash}·误伤友军`
@@ -1577,7 +1751,7 @@ function buildShop() {
 }
 
 function buildLegend() {
-  const order = ['.', 'H', 'F', 'M', 'G', 'X', '#']
+  const order = state?.mapType === 'island' ? ['W', 'R', 'B', 'D', 'H', 'F'] : ['.', 'H', 'F', 'M', 'G', 'X', '#']
   els.legend.innerHTML = order
     .map((ch) => {
       const t = TERRAIN[ch]
@@ -1603,7 +1777,7 @@ function buildLevels() {
 // ───────── 启动 ─────────
 function boot() {
   const ids = [
-    'board', 'banner', 'hint', 'legend', 'turnSide', 'endTurnBtn', 'undoBtn',
+    'mapSelect', 'board', 'banner', 'hint', 'legend', 'turnSide', 'endTurnBtn', 'undoBtn',
     'redMoney', 'blueMoney', 'redBaseHp', 'blueBaseHp', 'redBaseFill', 'blueBaseFill',
     'redPanel', 'bluePanel', 'shop', 'shopMoney', 'infoBody', 'log',
     'overlay', 'overlayIcon', 'overlayTitle', 'overlaySub', 'restartBtn',
@@ -1635,6 +1809,8 @@ window.__war = {
     return MAP
   },
   generateMap,
+  generateIslandMap,
+  canBoard, boardUnit, canUnload, unloadUnit, reachable, canAttack, canAttackBase, doBuy, undo, resolveSupplies, cleanupDead, aiActUnit, aiBuy,
   init,
   endTurn,
   render,

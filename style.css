@@ -1388,3 +1388,29 @@ button {
     font-size: 24px;
   }
 }
+
+/* 海岛战场：深蓝航道、珊瑚浅海与沙色登陆岸。 */
+.map-picker { display: grid; gap: 8px; text-align: left; margin: 18px 0 6px; color: #bdcaaa; font-size: 13px; }
+.map-picker select { width: 100%; background: #142526; color: #e5e7ce; border: 1px solid #56706a; border-radius: 8px; padding: 12px; font: inherit; }
+.map-note { font-size: 11px; color: #879787; margin-bottom: 16px; }
+.cell.water, .cell.dock { background: repeating-linear-gradient(170deg, #133c52 0px, #133c52 10px, #19495c 11px, #143c52 14px); }
+.cell.water.alt { background-color: #17485f; }
+.cell.reef { background: radial-gradient(ellipse at 35% 60%, #3c8b88 0, #245f6c 42%, #16445b 75%); }
+.cell.beach { background: linear-gradient(140deg, #b5a370, #8a8554); }
+.cell.reef::before, .cell.dock::before, .cell.supply::before { position: absolute; inset: 0; display: grid; place-items: center; font-size: calc(var(--cell) * .48); pointer-events: none; }
+.cell.reef::before { content: '🪸'; opacity: .65; }
+.cell.dock::before { content: '⚓'; }
+.cell.dock-red { box-shadow: inset 0 0 0 2px #c76b68; }
+.cell.dock-blue { box-shadow: inset 0 0 0 2px #6a9ddb; }
+.cell.supply { background: radial-gradient(circle, #a49b54, #686d42); }
+.cell.supply::before { content: '📦'; }
+.cell.embark { box-shadow: inset 0 0 0 3px #f6cb65; cursor: pointer; }
+.island-board .cell.move { background: #3c796c; box-shadow: inset 0 0 0 2px #9cd99d; }
+.island-board .cell.attack { background: #8d4442; box-shadow: inset 0 0 0 2px #e7a091; }
+@media (max-width: 960px) {
+  .topbar { grid-template-columns: minmax(0, 1fr); min-width: 0; }
+  .turn-box { min-width: 0; flex-wrap: wrap; gap: 8px; }
+  .turn-buttons { flex-wrap: wrap; justify-content: center; }
+  .board-area, .board-frame, .layout, .side { min-width: 0; max-width: 100%; }
+  .legend { flex-wrap: wrap; }
+}
