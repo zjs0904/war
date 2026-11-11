@@ -8,11 +8,24 @@
       rel="icon"
       href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚔️</text></svg>"
     />
-    <title>小小大战争 · 双人对战</title>
-    <link rel="stylesheet" href="./style.css?v=1.21" />
+    <title>游戏大厅</title>
+    <link rel="stylesheet" href="./style.css?v=1.23" />
   </head>
   <body>
-    <div id="app">
+    <section id="gameHub" class="game-hub">
+      <header class="hub-header">✦ 闲时游戏 <span>2 款游戏</span></header>
+      <main class="hub-content"><p>选一个世界，开始冒险</p><h1>游戏大厅</h1><p>今天，玩点什么？</p>
+        <button id="openWarBtn" class="hub-game" type="button">
+          <span class="hub-art" aria-hidden="true">🪖 ⚔️ 🚢<strong>小小大战争</strong></span>
+          <span class="hub-body"><small>回合策略 · 单人 / 双人</small><strong>小小大战争 ↗</strong><span>集结部队、争夺补给，从陆地攻坚到海岛登陆，用你的战术赢下战场。</span><b>进入游戏 →</b></span>
+        </button>
+        <a class="hub-game hub-tank" href="./tank-battle/">
+          <span class="hub-art" aria-hidden="true">🛡️ 💥 🎮<strong>坦克大战</strong></span>
+          <span class="hub-body"><small>街机射击 · 单人 / 双人</small><strong>坦克大战 ↗</strong><span>驾驶坦克守护基地，抢夺激光炮与护盾，也可以与朋友同屏对战。</span><b>进入游戏 →</b></span>
+        </a><p class="hub-footer">更多游戏，慢慢加入。</p>
+      </main>
+    </section>
+    <div id="app" hidden>
       <header class="topbar">
         <div class="player-panel red" id="redPanel">
           <div class="pp-head">
@@ -36,6 +49,7 @@
           <div class="mode-tag" id="modeTag" hidden></div>
           <div class="turn-buttons">
             <button class="btn btn-end" id="endTurnBtn" type="button">结束回合</button>
+            <button class="btn btn-rescue" id="rescueBtn" type="button" title="先选择受伤部队，花费100金币治疗其及相邻友军40生命，冷却3轮">✚ 救援 100</button>
             <button class="btn btn-undo" id="undoBtn" type="button" title="撤销上一步（Ctrl+Z）" disabled>↶ 撤销</button>
             <button class="btn btn-icon" id="helpBtn" type="button" aria-label="玩法说明">?</button>
             <button class="btn btn-icon" id="menuBtn" type="button" aria-label="主菜单">☰</button>
@@ -60,6 +74,7 @@
         </div>
       </header>
 
+      <div class="battle-status" id="battleStatus" aria-live="polite"></div>
       <main class="layout">
         <section class="board-area">
           <div class="board-frame">
@@ -109,6 +124,9 @@
           <div class="overlay-icon">📖</div>
           <h1>玩法说明</h1>
           <ul class="help-list">
+            <li><b>控图胜利</b>：第 3 轮起，陆地的两座中立油田或海岛中央补给站每座每回合 +1 积分；第 12 轮起双倍，先到 20 分获胜。敌军距据点 1 格内会阻止计分。摧毁或占领基地仍可获胜。</li>
+            <li><b>空投</b>：第 3 轮开始每 4 轮出现补给箱，3 轮后消失；移动至箱子获得 125 金币和 25 生命。</li>
+            <li><b>维修与救援</b>：选中工程师后点击相邻受伤友军，免费回复 45 生命，消耗工程师攻击机会。选中部队点「救援」，花 100 金币治疗其及相邻友军 40 生命，冷却 3 轮。</li>
             <li><b>海岛地图</b>：在主菜单选择海岛后开始双人或关卡对战。双方主岛各有造船厂，中央岛有中立补给站。</li>
             <li><b>舰船与登陆</b>：运输船搭载 2 人，选中未行动士兵，点击相邻己方运输船上船；选中船点击相邻金色陆地卸载。登陆士兵下回合行动，沉船会损失乘员。高射炮艇打士兵和舰船，鱼雷艇只打舰船。</li>
             <li><b>补给站</b>：任意士兵驻守至己方下回合占领，每回合 +75 金币，并为 2 格内友军回复 30 生命。礁石减慢舰船，但提供 20% 减伤；造船厂每回合修复己方舰船 40 生命。</li>
@@ -156,11 +174,12 @@
           <div class="level-grid" id="levelGrid"></div>
 
           <button class="menu-link" id="resumeBtn" type="button" hidden>返回当前对局</button>
+          <button class="menu-link" id="backHubBtn" type="button">← 返回游戏大厅</button>
           <button class="menu-link" id="menuHelpBtn" type="button">查看玩法说明</button>
         </div>
       </div>
     </div>
 
-    <script src="./game.js?v=1.21"></script>
+    <script src="./game.js?v=1.23"></script>
   </body>
 </html>

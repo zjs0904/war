@@ -6,7 +6,7 @@
  * 每局随机生成，两侧地形不镜像；单位击杀可晋升军衔
  * ============================================================ */
 
-const VERSION = 'v1.21'
+const VERSION = 'v1.23'
 
 // ───────── 常量 ─────────
 const COLS = 19
@@ -17,6 +17,8 @@ const START_MONEY = 400
 const BASE_INCOME = 150
 const FIELD_INCOME = 50
 const BASE_CAPTURE_TURNS = 2
+const SCORE_TARGET = 20
+const RESCUE_COST = 100
 
 const DIRS = [
   [0, 1],
@@ -366,7 +368,7 @@ const UNIT_TYPES = {
     range: 0,
     move: 4,
     canCapture: true,
-    desc: '没有攻击力。站上油田一回合后占领；在敌方基地旁站 2 回合可占领基地获胜。',
+    desc: '站上油田一回合后占领；在敌方基地旁站 2 回合可占领基地。可维修相邻友军 45 生命，消耗本回合攻击机会，仍可移动。',
   },
   grenadier: {
     key: 'grenadier',
@@ -475,6 +477,7 @@ function unloadUnit(ship, x, y) {
   const passengerId = ship.cargo.shift()
   const u = state.units.find(p => p.id === passengerId)
   u.carrierId = null; u.x = x; u.y = y; u.moved = true; u.acted = true
+  collectDrop(u)
   // 同一回合可依次卸下两名乘员，登陆后下回合才能行动。
   addLog(ship.side, `${u.name} 登陆 (${x},${y})`)
   setHint('已登陆，士兵下回合可行动；可继续卸载另一名乘员')
@@ -550,6 +553,80 @@ function aiNavalAction(u) {
   return false
 }
 
+// ───────── 战场目标与支援 ─────────
+function strategicPoints() {
+  return state.mapType === 'island' ? state.supplies : state.fields.filter(f => FIELD_POS.some(p => p.owner === null && p.x === f.x && p.y === f.y))
+}
+function scoreTurn(side) {
+  if (state.round < 3) return
+  const points = strategicPoints().filter(p => p.owner === side && !state.units.some(u => !u.carrierId && u.side !== side && dist(u,p) <= 1)).length
+  const gained = points * (state.round >= 12 ? 2 : 1)
+  if (!gained) return
+  state.score[side] += gained
+  addLog(side, `控制战略据点，积分 +${gained}（${state.score[side]}/${SCORE_TARGET}）`)
+  if (state.score[side] >= SCORE_TARGET) endGame(side, 'score')
+}
+function updateDrops() {
+  state.drops = state.drops.filter(p => p.expires > state.round)
+  if (state.round < 3 || (state.round-3)%4 !== 0 || state.dropRound === state.round) return
+  state.dropRound = state.round
+  const candidates = []
+  for (let y=1;y<ROWS-1;y++) for (let x=7;x<=11;x++) {
+    if (unitAt(x,y) || fieldAt(x,y) || state.supplies.some(p=>p.x===x&&p.y===y)) continue
+    if (Number.isFinite(moveCostAt(x,y)) || (state.mapType==='island' && isSea(x,y))) candidates.push({x,y})
+  }
+  if (!candidates.length) return
+  // 距两侧基地尽可能接近，随机改变争夺方向。
+  const balanced = candidates.filter(p => Math.abs(dist(p,BASE_POS.red)-dist(p,BASE_POS.blue)) <= 2)
+  const pool = balanced.length ? balanced : candidates
+  const p = pool[randInt(pool.length)]
+  state.drops.push({...p,expires:state.round+3})
+  addLog('sys', `补给空投抵达 (${p.x},${p.y})：先到者获得 125 金币并恢复 25 生命，3 轮后消失`)
+}
+function collectDrop(u) {
+  const index = state.drops.findIndex(p => p.x===u.x && p.y===u.y)
+  if (index < 0 || u.carrierId) return
+  state.drops.splice(index,1)
+  state.money[u.side] += 125
+  u.hp = Math.min(u.maxHp,u.hp+25)
+  addLog(u.side, `${u.name} 取得空投：金币 +125，回复 25 生命`)
+  floatText(u.x,u.y,'补给 +125','heal')
+}
+function canRepair(u,target) {
+  return u.type==='engineer' && !u.carrierId && !u.acted && target.id!==u.id && !target.carrierId && target.side===u.side && target.hp<target.maxHp && dist(u,target)===1
+}
+function repairUnit(u,target) {
+  if (!canRepair(u,target)) return false
+  pushUndo()
+  const heal=Math.min(45,target.maxHp-target.hp)
+  target.hp+=heal;u.acted=true
+  addLog(u.side, `工程师维修 ${target.name}，回复 ${heal} 生命`)
+  floatText(target.x,target.y,`+${heal}`,'heal')
+  render()
+  return true
+}
+function canRescue(u) {
+  return u && !u.carrierId && u.side===state.turn && state.money[u.side]>=RESCUE_COST && state.round>=state.rescueReady[u.side] &&
+    state.units.some(p=>p.side===u.side&&!p.carrierId&&dist(p,u)<=1&&p.hp<p.maxHp)
+}
+function rescue(u=getSelected()) {
+  if (!canHumanAct() || !canRescue(u)) return false
+  return doRescue(u)
+}
+function doRescue(u) {
+  if (!canRescue(u)) return false
+  pushUndo()
+  state.money[u.side]-=RESCUE_COST
+  state.rescueReady[u.side]=state.round+3
+  for (const p of state.units) if (p.side===u.side&&!p.carrierId&&dist(p,u)<=1) {
+    const heal=Math.min(40,p.maxHp-p.hp);p.hp+=heal
+    if (heal) floatText(p.x,p.y,`+${heal}`,'heal')
+  }
+  addLog(u.side,'紧急救援：目标及相邻友军回复 40 生命，冷却 3 轮')
+  render()
+  return true
+}
+
 // ───────── 初始化 ─────────
 function init(mode = 'pvp', level = 1, mapType = state?.mapType || 'land') {
   clearTimeout(aiTimer)
@@ -577,6 +654,10 @@ function init(mode = 'pvp', level = 1, mapType = state?.mapType || 'land') {
     gameOver: false,
     aiThinking: false,
     round: 1,
+    score: {red: 0, blue: 0},
+    rescueReady: {red: 1, blue: 1},
+    drops: [],
+    dropRound: 0,
   }
   unitSeq = 1
 
@@ -662,7 +743,11 @@ function startTurn(side, first = false) {
     }
     resolveSpawnSlots(side)
     resolveSupplies(side)
+    scoreTurn(side)
+    if (state.gameOver) return
   }
+
+  if (side === 'red') updateDrops()
 
   const fieldCount = state.fields.filter((f) => f.owner === side).length
   let income = BASE_INCOME + fieldCount * FIELD_INCOME + state.supplies.filter(p => p.owner === side).length * 75
@@ -913,6 +998,7 @@ function cellClicked(x, y) {
 
   if (sel) {
     const vessel = unitAt(x, y)
+    if (vessel && canRepair(sel,vessel)) { repairUnit(sel,vessel); return }
     if (vessel && canBoard(sel, vessel)) { boardUnit(sel, vessel); return }
     if (canUnload(sel, x, y)) { unloadUnit(sel, x, y); return }
     if (!sel.moved && isMoveTile(sel, x, y)) {
@@ -970,6 +1056,7 @@ function doMove(u, x, y) {
   u.moved = true
   for (const id of u.cargo) { const passenger = state.units.find(p => p.id === id); if (passenger) { passenger.x = x; passenger.y = y } }
   addLog(u.side, `${u.name} 移动到 (${x},${y})`)
+  collectDrop(u)
   // 攻击过但还没移动的单位，移动完才算本回合行动结束
   if (u.moved && u.acted && state.selectedId === u.id) state.selectedId = null
   if (!u.acted && canHumanAct()) setHint('已移动，还可以攻击')
@@ -1101,7 +1188,7 @@ function endGame(winner, reason = 'destroy') {
   els.overlayTitle.textContent = `${sideName(winner)}胜利`
   els.overlayTitle.className = winner
   els.overlaySub.textContent =
-    reason === 'capture' ? '敌方基地被工程师占领' : '敌方基地被摧毁'
+    reason === 'score' ? `战略积分达到 ${SCORE_TARGET}，控图获胜` : reason === 'capture' ? '敌方基地被工程师占领' : '敌方基地被摧毁'
   els.overlay.hidden = false
   addLog('sys', `${sideName(winner)}获胜：${els.overlaySub.textContent}`)
   render()
@@ -1114,6 +1201,8 @@ function aiTurn() {
     return
   }
 
+  const wounded = state.units.filter(u=>u.side==='blue'&&!u.carrierId&&canRescue(u)).sort((a,b)=>(a.hp/a.maxHp)-(b.hp/b.maxHp))[0]
+  if (wounded && wounded.hp/wounded.maxHp < 0.5) doRescue(wounded)
   aiBuy()
   render()
 
@@ -1175,6 +1264,9 @@ function choosePurchase() {
 }
 
 function aiActUnit(u) {
+  const patient = state.units.filter(p=>canRepair(u,p)).sort((a,b)=>(b.maxHp-b.hp)-(a.maxHp-a.hp))[0]
+  if (patient) repairUnit(u,patient)
+  if (!isShip(u) && (u.type==='engineer' || state.mapType==='island') && strategicPoints().some(p=>p.owner!==u.side&&p.x===u.x&&p.y===u.y)) { u.moved=true;u.acted=true;return }
   if (state.mapType === 'island' && aiNavalAction(u)) return
   if (u.type === 'engineer' && state.baseProgress.blue > 0 && dist(u, enemyBasePos('blue')) <= 1) {
     u.acted = true
@@ -1207,6 +1299,9 @@ function aiActUnit(u) {
       else if (isSwamp(pos.x, pos.y)) score -= 10
     }
 
+    if (state.drops.some(p=>p.x===pos.x&&p.y===pos.y)) score+=240
+    if (!isShip(u) && state.supplies.some(p=>p.owner!==u.side&&p.x===pos.x&&p.y===pos.y)) score+=300
+    if (u.type==='engineer' && state.fields.some(p=>p.owner!==u.side&&p.x===pos.x&&p.y===pos.y)) score+=280
     if (!best || score > best.score) {
       best = { pos, score, target, moved, canShoot }
     }
@@ -1278,6 +1373,9 @@ function targetScore(u, t) {
 }
 
 function objectiveDistance(u, pos) {
+  const prizes = state.drops.filter(p=>isShip(u)===isSea(p.x,p.y))
+  if (!isShip(u)) prizes.push(...state.supplies.filter(p=>p.owner!==u.side))
+  if (prizes.length) return Math.min(...prizes.map(p=>dist(pos,p)))
   if (u.type === 'engineer') {
     const targets = [...state.supplies, ...state.fields].filter((f) => f.owner !== 'blue').map((f) => dist(pos, f))
     if (targets.length) return Math.min(...targets)
@@ -1343,11 +1441,15 @@ function renderCells() {
       }
 
       if (state.supplies.some(p => p.x === x && p.y === y)) {
-        const supply = state.supplies.find(p => p.x === x && p.y === y)
+        const drop = state.drops.find(p=>p.x===x&&p.y===y)
+  if (drop) return `<div class="info-head">🎁 限时补给箱</div><div class="info-desc">移动到此格立即获得 125 金币并回复 25 生命；剩余 ${drop.expires-state.round} 轮。士兵与舰船均可拾取对应地形上的补给。</div>`
+  const supply = state.supplies.find(p => p.x === x && p.y === y)
         cls += ' supply' + (supply.owner ? ' well-' + supply.owner : '')
       }
       if (state.mapType === 'island' && terrain.key === 'dock') cls += x < 9 ? ' dock-red' : ' dock-blue'
       if (sel && (canUnload(sel, x, y) || (unitAt(x, y) && canBoard(sel, unitAt(x, y))))) cls += ' embark'
+      if (state.drops.some(p=>p.x===x&&p.y===y)) cls+=' drop'
+      if (sel && unitAt(x,y) && canRepair(sel,unitAt(x,y))) cls+=' repair'
       if (moveSet.has(k)) cls += ' move'
       if (attackSet.has(k)) cls += ' attack'
       if (sel && sel.x === x && sel.y === y) cls += ' selected'
@@ -1450,6 +1552,10 @@ function renderHud() {
   els.bluePanel.classList.toggle('active', state.turn === 'blue' && !state.gameOver)
 
   els.endTurnBtn.disabled = state.gameOver || !canHumanAct()
+  els.rescueBtn.disabled = !canHumanAct() || !canRescue(getSelected())
+  const cooldown = Math.max(0,state.rescueReady[state.turn]-state.round)
+  els.rescueBtn.textContent = cooldown ? `救援 · ${cooldown}轮` : '✚ 救援 100'
+  els.battleStatus.innerHTML = `<span>第 <b>${state.round}</b> 轮</span><span class="score-red">红 ${state.score.red}/${SCORE_TARGET}</span><span class="score-blue">蓝 ${state.score.blue}/${SCORE_TARGET}</span><span>${state.round<3?'第 3 轮开始计分':state.round>=12?'决胜阶段 · 据点双倍积分':'控制据点积累积分'}</span><span>${state.drops.length ? '🎁 补给剩余 '+(state.drops[0].expires-state.round)+' 轮' : '下一次空投：第 '+(state.round<3?3:3+4*(Math.floor((state.round-3)/4)+1))+' 轮'}</span>`
   els.undoBtn.disabled = state.gameOver || !canHumanAct() || undoStack.length === 0
 
   if (state.mode === 'ai') {
@@ -1508,6 +1614,8 @@ function renderInfo() {
 }
 
 function terrainInfoHtml(x, y) {
+  const drop = state.drops.find(p=>p.x===x&&p.y===y)
+  if (drop) return `<div class="info-head">🎁 限时补给箱</div><div class="info-desc">移动到此格立即获得 125 金币并回复 25 生命；剩余 ${drop.expires-state.round} 轮。士兵与舰船均可拾取对应地形上的补给。</div>`
   const supply = state.supplies.find(p => p.x === x && p.y === y)
   if (supply) return `<div class="info-head">📦 中立补给站</div><div class="info-desc">${supply.owner ? sideName(supply.owner) + '控制' : '尚未占领'}。任意士兵驻守至己方下回合即占领；每回合 +75 金币，并为距离 2 格内友军回复 30 生命。</div>`
   const t = terrainAt(x, y)
@@ -1619,6 +1727,19 @@ function escapeHtml(s) {
 
 // ───────── 事件 ─────────
 function bindEvents() {
+  els.openWarBtn.addEventListener('click', () => {
+    els.gameHub.hidden = true
+    els.app.hidden = false
+    els.menuOverlay.hidden = false
+    document.title = '小小大战争 · 双人对战'
+    els.pvpBtn.focus?.()
+  })
+  els.backHubBtn.addEventListener('click', () => {
+    els.app.hidden = true
+    els.gameHub.hidden = false
+    document.title = '游戏大厅'
+    els.openWarBtn.focus?.()
+  })
   els.board.addEventListener('click', (e) => {
     const cell = e.target.closest('.cell')
     if (!cell) return
@@ -1671,6 +1792,7 @@ function bindEvents() {
 
   els.endTurnBtn.addEventListener('click', endTurn)
   els.undoBtn.addEventListener('click', undo)
+  els.rescueBtn.addEventListener('click', () => rescue())
   els.restartBtn.addEventListener('click', () => {
     els.overlay.hidden = true
     init(state.mode, state.level)
@@ -1712,6 +1834,7 @@ function bindEvents() {
   })
 
   window.addEventListener('keydown', (e) => {
+    if (!els.gameHub.hidden || !els.menuOverlay.hidden || !els.helpOverlay.hidden) return
     if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
       e.preventDefault()
@@ -1777,7 +1900,7 @@ function buildLevels() {
 // ───────── 启动 ─────────
 function boot() {
   const ids = [
-    'mapSelect', 'board', 'banner', 'hint', 'legend', 'turnSide', 'endTurnBtn', 'undoBtn',
+    'app', 'gameHub', 'openWarBtn', 'backHubBtn', 'battleStatus', 'rescueBtn', 'mapSelect', 'board', 'banner', 'hint', 'legend', 'turnSide', 'endTurnBtn', 'undoBtn',
     'redMoney', 'blueMoney', 'redBaseHp', 'blueBaseHp', 'redBaseFill', 'blueBaseFill',
     'redPanel', 'bluePanel', 'shop', 'shopMoney', 'infoBody', 'log',
     'overlay', 'overlayIcon', 'overlayTitle', 'overlaySub', 'restartBtn',
@@ -1810,6 +1933,7 @@ window.__war = {
   },
   generateMap,
   generateIslandMap,
+  scoreTurn, updateDrops, canRepair, repairUnit, rescue, doRescue, canRescue,
   canBoard, boardUnit, canUnload, unloadUnit, reachable, canAttack, canAttackBase, doBuy, undo, resolveSupplies, cleanupDead, aiActUnit, aiBuy,
   init,
   endTurn,

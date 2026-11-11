@@ -1,0 +1,101 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>坦克大战</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <aside class="panel">
+        <a class="back-hub" href="../index.html">← 返回游戏大厅</a>
+        <div class="hero-copy">
+          <p class="eyebrow">Arena Upgrade</p>
+          <h1>坦克大战</h1>
+          <p class="intro">单人模式现在更耐玩：敌人更少、节奏更稳，新增钢墙、直线激光和更合理的战场道具。</p>
+        </div>
+
+        <section class="mode-panel">
+          <p class="section-title">模式选择</p>
+          <div class="mode-switch">
+            <button id="singleModeButton" class="mode-button active" type="button">单人闯关</button>
+            <button id="versusModeButton" class="mode-button" type="button">双人对战</button>
+          </div>
+          <button id="startButton" class="primary-button" type="button">开始战斗</button>
+        </section>
+
+        <section class="stat-grid">
+          <div class="stat-card stat-card-highlight"><span>总分 / 胜场</span><strong id="score">0</strong></div>
+          <div class="stat-card"><span>关卡 / 回合</span><strong id="level">1</strong></div>
+          <div class="stat-card"><span>敌军 / 状态</span><strong id="enemies">0</strong></div>
+          <div class="stat-card"><span>基地耐久</span><strong id="baseHp">6</strong></div>
+          <div class="stat-card"><span>1P 生命</span><strong id="p1Lives">4</strong></div>
+          <div class="stat-card"><span>2P 生命</span><strong id="p2Lives">0</strong></div>
+          <div class="stat-card"><span>1P 道具</span><strong id="p1Item">-</strong></div>
+          <div class="stat-card"><span>1P 剩余</span><strong id="p1Timer">0s</strong></div>
+          <div class="stat-card"><span>2P 道具</span><strong id="p2Item">-</strong></div>
+          <div class="stat-card"><span>2P 剩余</span><strong id="p2Timer">0s</strong></div>
+        </section>
+
+        <section class="controls-layout">
+          <div class="controls-card">
+            <p class="section-title">1P 操作</p>
+            <ul class="controls-list">
+              <li><span>W A S D</span><em>移动</em></li>
+              <li><span>J</span><em>开火</em></li>
+              <li><span>屏幕按钮</span><em>移动端单人</em></li>
+            </ul>
+          </div>
+          <div class="controls-card">
+            <p class="section-title">2P 操作</p>
+            <ul class="controls-list">
+              <li><span>方向键</span><em>移动</em></li>
+              <li><span>Enter</span><em>开火</em></li>
+            </ul>
+          </div>
+        </section>
+
+        <section class="tips-card">
+          <p class="section-title">道具说明</p>
+          <p><strong>激光炮</strong>：发射一整条直线光束，可穿透敌人和普通墙体，但会被钢墙挡住。</p>
+          <p><strong>速射</strong>：显著缩短开火间隔，近距离压制力很强。</p>
+          <p><strong>推进器</strong>：提升移动速度，更适合走位、绕侧和抢道具。</p>
+          <p><strong>护盾</strong>：可抵挡两次命中，适合过危险火线。</p>
+          <p><strong>维修包</strong>：单人模式修满基地耐久，双人模式额外加一条命。</p>
+          <p><strong>钢墙</strong>：不可破坏，用来卡位、防守、挡激光都很关键。</p>
+        </section>
+      </aside>
+
+      <main class="game-stage">
+        <div class="canvas-frame">
+          <div class="stage-topbar">
+            <span id="modeBadge" class="mode-badge">单人闯关</span>
+            <span class="topbar-tip">抢道具，控节奏，守基地</span>
+          </div>
+          <canvas id="gameCanvas" width="960" height="640"></canvas>
+          <div id="overlay" class="overlay">
+            <div class="overlay-card">
+              <h2 id="overlayTitle">准备开战</h2>
+              <p id="overlayText">单人模式对战 AI，双人模式是 1P 对 2P。</p>
+            </div>
+          </div>
+        </div>
+
+        <div id="mobileControls" class="mobile-controls hidden">
+          <div class="mobile-pad">
+            <button class="touch-button touch-up" data-touch-key="KeyW" type="button">↑</button>
+            <button class="touch-button touch-left" data-touch-key="KeyA" type="button">←</button>
+            <button class="touch-button touch-right" data-touch-key="KeyD" type="button">→</button>
+            <button class="touch-button touch-down" data-touch-key="KeyS" type="button">↓</button>
+          </div>
+          <div class="mobile-actions">
+            <button class="touch-button touch-fire" data-touch-key="KeyJ" type="button">发射</button>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <script src="./game.js"></script>
+  </body>
+</html>

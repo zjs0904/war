@@ -33,3 +33,24 @@ for(let round=0;round<18;round++){
 }
 assert(landed,'AI should land on central island')
 console.log('PASS: island/land switching, naval production, boarding/capacity, movement, unloading/undo, sinking, torpedo restrictions, supply capture/healing, AI fleet and landing (18 turns)')
+
+// 战略目标、支援和撤销回归。
+w.init('pvp',1,'land');w.state.round=3;w.updateDrops();assert.equal(w.state.drops.length,1)
+const drop={...w.state.drops[0]},cash=w.state.money.red
+const scout=unit('infantry','red',2,4);scout.hp=50
+w.doMove(scout,drop.x,drop.y);assert.equal(w.state.money.red,cash+125);assert.equal(scout.hp,75);assert.equal(w.state.drops.length,0)
+w.undo();assert.equal(w.state.money.red,cash);assert.equal(w.state.drops.length,1)
+w.state.round=6;w.updateDrops();assert.equal(w.state.drops.length,0)
+w.state.round=7;w.updateDrops();w.updateDrops();assert.equal(w.state.drops.length,1)
+w.init('pvp',1,'land');let eng=unit('engineer','red',5,5),patient=unit('infantry','red',5,6);patient.hp=10
+assert(w.repairUnit(eng,patient));assert.equal(patient.hp,55);assert(eng.acted);assert(!eng.moved);assert(!w.repairUnit(eng,patient))
+w.undo();eng=w.state.units.find(u=>u.type==='engineer');patient=w.state.units.find(u=>u.type==='infantry');assert.equal(patient.hp,10);assert(!eng.acted)
+const before=w.state.money.red;assert(w.rescue(patient));assert.equal(patient.hp,50);assert.equal(w.state.money.red,before-100);assert(!w.rescue(patient))
+w.undo();assert.equal(w.state.money.red,before);assert.equal(w.state.rescueReady.red,1)
+w.state.round=2;w.state.fields.find(p=>p.x===6&&p.y===5).owner='red';w.scoreTurn('red');assert.equal(w.state.score.red,0)
+w.state.round=3;w.scoreTurn('red');assert.equal(w.state.score.red,1)
+let blocker=unit('infantry','blue',6,4);w.scoreTurn('red');assert.equal(w.state.score.red,1)
+blocker.x=15;w.state.round=12;w.scoreTurn('red');assert.equal(w.state.score.red,3)
+w.state.score.red=19;w.scoreTurn('red');assert(w.state.gameOver);assert.match(nodes.get('overlaySub').textContent,/20/)
+w.init('pvp',1,'island');w.state.round=3;w.state.supplies[0].owner='blue';w.scoreTurn('blue');assert.equal(w.state.score.blue,1)
+console.log('PASS: timed drops/expiry/undo, engineer repair/action limits, rescue cost/cooldown/undo, strategic scoring/contesting/double points/victory')
